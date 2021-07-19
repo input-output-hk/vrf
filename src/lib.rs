@@ -1,3 +1,7 @@
+pub mod constants;
+pub mod vrf;
+mod errors;
+
 #[cfg(test)]
 mod tests {
     #[test]
