@@ -12,6 +12,9 @@ use rand::{CryptoRng, RngCore};
 use std::iter;
 use std::ops::Neg;
 
+pub const SUITE: &[u8] = &[4u8];
+pub const ONE: &[u8] = &[1u8];
+pub const THREE: &[u8] = &[3u8];
 pub const SECRET_KEY_SIZE: usize = 32;
 pub const EXTENDED_KEY_SIZE: usize = 64;
 pub const SEED_BYTES: usize = 32;
@@ -19,7 +22,7 @@ pub const PUBLIC_KEY_SIZE: usize = 32;
 pub const PROOF_SIZE: usize = 80;
 pub const OUTPUT_SIZE: usize = 64;
 
-struct SecretKey([u8; SECRET_KEY_SIZE]);
+pub struct SecretKey([u8; SECRET_KEY_SIZE]);
 
 impl SecretKey {
     pub fn as_bytes(&self) -> &[u8]{
@@ -58,7 +61,7 @@ impl SecretKey {
     }
 }
 
-struct PublicKey(CompressedEdwardsY);
+pub struct PublicKey(CompressedEdwardsY);
 
 impl PublicKey {
     pub fn as_bytes(&self) -> &[u8; 32] {
@@ -75,52 +78,92 @@ impl<'a> From<&'a SecretKey> for PublicKey {
     }
 }
 
-struct VrfProof{
+pub struct VrfProof{
     gamma: EdwardsPoint,
     challenge: Scalar,
     response: Scalar
 }
 
 impl VrfProof {
-    pub fn generate(public_key: &PublicKey, secret_key: &SecretKey, alpha_string: &[u8]) -> Self {
-        let (secret_scalar, secret_extension) = secret_key.extend();
-
-        let mut hash_input = Vec::with_capacity(PUBLIC_KEY_SIZE + alpha_string.len());
+    /// Hash to curve function, following the 03 specification, and the libsodium implementation
+    /// with `ONE` as a separator.
+    fn hash_to_curve(public_key: &PublicKey, alpha_string: &[u8]) -> EdwardsPoint {
+        let mut hash_input = Vec::with_capacity(2 + PUBLIC_KEY_SIZE + alpha_string.len());
+        hash_input.extend_from_slice(SUITE);
+        hash_input.extend_from_slice(ONE);
         hash_input.extend_from_slice(public_key.as_bytes());
         hash_input.extend_from_slice(alpha_string);
-        let h = EdwardsPoint::hash_from_bytes::<Sha512>(&hash_input);
-        let h_bytes = h.compress().to_bytes();
-        let gamma = secret_scalar * h;
+        EdwardsPoint::hash_from_bytes::<Sha512>(&hash_input)
+    }
 
-        // Now we generate the nonce
+    fn nonce_generation(secret_extension: [u8; 32], h_point: EdwardsPoint) -> Scalar {
         let mut nonce_gen_input = [0u8; 64];
+        let h_bytes = h_point.compress().to_bytes();
+
         nonce_gen_input[..32].copy_from_slice(&secret_extension);
         nonce_gen_input[32..].copy_from_slice(&h_bytes);
 
-        let k = Scalar::hash_from_bytes::<Sha512>(&nonce_gen_input);
+        Scalar::hash_from_bytes::<Sha512>(&nonce_gen_input)
+    }
+
+    // todo: we are computing `h.compress()` two times (see above).
+    fn compute_challenge(h: &EdwardsPoint, gamma: &EdwardsPoint, announcement_1: &EdwardsPoint, announcement_2: &EdwardsPoint) -> Scalar {
+        // we use a scalar of 16 bytes (instead of 32), but store it in 32 bits, as that is what
+        // `Scalar::from_bits()` expects.
+        let mut scalar_bytes = [0u8; 32];
+        let mut challenge_hash = Sha512::new();
+        challenge_hash.update(&h.compress().to_bytes());
+        challenge_hash.update(gamma.compress().as_bytes());
+        challenge_hash.update(announcement_1.compress().as_bytes());
+        challenge_hash.update(announcement_2.compress().as_bytes());
+
+        scalar_bytes[..16].copy_from_slice(&challenge_hash.finalize().as_slice()[..16]);
+
+        Scalar::from_bits(scalar_bytes)
+    }
+
+    fn to_bytes(&self) -> [u8; PROOF_SIZE] {
+        let mut proof = [0u8; PROOF_SIZE];
+        proof[..32].copy_from_slice(self.gamma.compress().as_bytes());
+        proof[32..48].copy_from_slice(&self.challenge.to_bytes()[..16]);
+        proof[48..].copy_from_slice(self.response.as_bytes());
+
+        proof
+    }
+
+    fn proof_to_hash(&self) -> [u8; OUTPUT_SIZE] {
+        let mut output = [0u8; OUTPUT_SIZE];
+        let mut hash = Sha512::new();
+        hash.update(SUITE);
+        hash.update(THREE);
+        hash.update(self.to_bytes());
+
+        output.copy_from_slice(hash.finalize().as_slice());
+        output
+    }
+
+    pub fn generate(public_key: &PublicKey, secret_key: &SecretKey, alpha_string: &[u8]) -> Self {
+        let (secret_scalar, secret_extension) = secret_key.extend();
+
+        let h = Self::hash_to_curve(public_key, alpha_string);
+        let gamma = secret_scalar * h;
+
+        // Now we generate the nonce
+        let k = Self::nonce_generation(secret_extension, h);
+
         let announcement_base = k * ED25519_BASEPOINT_POINT;
         let announcement_h = k * h;
 
         // Now we compute the challenge
-        let mut challenge_hash = Sha512::new();
-        challenge_hash.update(&h_bytes);
-        challenge_hash.update(gamma.compress().as_bytes());
-        challenge_hash.update(announcement_base.compress().as_bytes());
-        challenge_hash.update(announcement_h.compress().as_bytes());
-
-        let challenge = Scalar::from_hash(challenge_hash);
+        let challenge = Self::compute_challenge(&h, &gamma, &announcement_base, &announcement_h);
 
         // And finally the response of the sigma protocol
         let response = k + challenge * secret_scalar;
         Self { gamma, challenge, response }
     }
 
-    pub fn verify(&self, public_key: &PublicKey, alpha_string: &[u8]) -> Result<(), VrfError> {
-        let mut hash_input = Vec::with_capacity(PUBLIC_KEY_SIZE + alpha_string.len());
-        hash_input.extend_from_slice(public_key.as_bytes());
-        hash_input.extend_from_slice(alpha_string);
-        let h = EdwardsPoint::hash_from_bytes::<Sha512>(&hash_input);
-        let h_bytes = h.compress().to_bytes();
+    pub fn verify(&self, public_key: &PublicKey, alpha_string: &[u8]) -> Result<[u8; OUTPUT_SIZE], VrfError> {
+        let h = Self::hash_to_curve(public_key, alpha_string);
 
         let decompressed_pk = match public_key.0.decompress() {
             Some(point) => point,
@@ -136,16 +179,11 @@ impl VrfProof {
         );
 
         // Now we compute the challenge
-        let mut challenge_hash = Sha512::new();
-        challenge_hash.update(&h_bytes);
-        challenge_hash.update(self.gamma.compress().as_bytes());
-        challenge_hash.update(U.compress().as_bytes());
-        challenge_hash.update(V.compress().as_bytes());
+        let challenge = Self::compute_challenge(&h, &self.gamma, &U, &V);
 
-        let challenge = Scalar::from_hash(challenge_hash);
-
+        // todo: we don't need constant time equality checking
         if challenge == self.challenge {
-            Ok(())
+            Ok(self.proof_to_hash())
         }
         else {
             Err(VrfError::VerificationFailed)
@@ -167,5 +205,8 @@ mod test {
         let vrf_proof = VrfProof::generate(&public_key, &secret_key, &alpha_string);
 
         assert!(vrf_proof.verify(&public_key, &alpha_string).is_ok());
+
+        let false_key = PublicKey(EdwardsPoint::hash_from_bytes::<Sha512>(&[0u8]).compress());
+        assert!(vrf_proof.verify(&false_key, &alpha_string).is_err())
     }
 }
