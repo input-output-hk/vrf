@@ -7,7 +7,7 @@ edition = "2018"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-curve25519-dalek = { git = "https://github.com/iquerejeta/curve25519-dalek", branch = "main"  }
+curve25519-dalek = { git = "https://github.com/iquerejeta/curve25519-dalek", branch = "old_elligator2"  }
 rand = "0.8"
 sha2 = "0.9"
 thiserror = "1"

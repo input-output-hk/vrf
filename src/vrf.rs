@@ -95,7 +95,7 @@ pub struct VrfProof{
 
 impl VrfProof {
     /// Hash to curve function, following the 03 specification, and the libsodium implementation
-    /// with `ONE` as a separator.
+    /// with `ONE` as a separator. This one is different to the one implemented in curve25519_dalek
     fn hash_to_curve(public_key: &PublicKey, alpha_string: &[u8]) -> EdwardsPoint {
         let mut hash_input = Vec::with_capacity(2 + PUBLIC_KEY_SIZE + alpha_string.len());
         hash_input.extend_from_slice(SUITE);
