@@ -14,6 +14,7 @@ use std::ops::Neg;
 
 pub const SUITE: &[u8] = &[4u8];
 pub const ONE: &[u8] = &[1u8];
+pub const TWO: &[u8] = &[2u8];
 pub const THREE: &[u8] = &[3u8];
 pub const SECRET_KEY_SIZE: usize = 32;
 pub const EXTENDED_KEY_SIZE: usize = 64;
@@ -27,6 +28,10 @@ pub struct SecretKey([u8; SECRET_KEY_SIZE]);
 impl SecretKey {
     pub fn as_bytes(&self) -> &[u8]{
         &self.0
+    }
+
+    pub fn from_bytes(bytes: &[u8; SECRET_KEY_SIZE]) -> Self {
+        SecretKey(*bytes)
     }
 
     pub fn generate<R>(csrng: &mut R) -> Self
@@ -64,8 +69,12 @@ impl SecretKey {
 pub struct PublicKey(CompressedEdwardsY);
 
 impl PublicKey {
-    pub fn as_bytes(&self) -> &[u8; 32] {
+    pub fn as_bytes(&self) -> &[u8; PUBLIC_KEY_SIZE] {
         self.0.as_bytes()
+    }
+
+    pub fn from_bytes(bytes: &[u8; PUBLIC_KEY_SIZE]) -> Self {
+        PublicKey(CompressedEdwardsY::from_slice(bytes))
     }
 }
 
@@ -112,6 +121,8 @@ impl VrfProof {
         // `Scalar::from_bits()` expects.
         let mut scalar_bytes = [0u8; 32];
         let mut challenge_hash = Sha512::new();
+        challenge_hash.update(SUITE);
+        challenge_hash.update(TWO);
         challenge_hash.update(&h.compress().to_bytes());
         challenge_hash.update(gamma.compress().as_bytes());
         challenge_hash.update(announcement_1.compress().as_bytes());
@@ -122,7 +133,7 @@ impl VrfProof {
         Scalar::from_bits(scalar_bytes)
     }
 
-    fn to_bytes(&self) -> [u8; PROOF_SIZE] {
+    pub fn to_bytes(&self) -> [u8; PROOF_SIZE] {
         let mut proof = [0u8; PROOF_SIZE];
         proof[..32].copy_from_slice(self.gamma.compress().as_bytes());
         proof[32..48].copy_from_slice(&self.challenge.to_bytes()[..16]);
@@ -133,10 +144,11 @@ impl VrfProof {
 
     fn proof_to_hash(&self) -> [u8; OUTPUT_SIZE] {
         let mut output = [0u8; OUTPUT_SIZE];
+        let gamma_cofac = self.gamma.mul_by_cofactor();
         let mut hash = Sha512::new();
         hash.update(SUITE);
         hash.update(THREE);
-        hash.update(self.to_bytes());
+        hash.update(gamma_cofac.compress().as_bytes());
 
         output.copy_from_slice(hash.finalize().as_slice());
         output
