@@ -51,7 +51,6 @@ impl SecretKey {
 
     /// Given a `SecretKey`, the `extend` function hashes the secret bytes to generate a secret
     /// scalar, and the `SecretKey` extension (of 32 bytes).
-    // todo: this can be improved (edc)
     pub fn extend(&self) -> (Scalar, [u8; 32]) {
         let mut h: Sha512 = Sha512::new();
         let mut extended = [0u8; 64];
@@ -118,9 +117,9 @@ impl VrfProof {
     }
 
     /// Nonce generation function, following the 03 specification.
-    fn nonce_generation(secret_extension: [u8; 32], h_point: EdwardsPoint) -> Scalar {
+    fn nonce_generation(secret_extension: [u8; 32], compressed_h: CompressedEdwardsY) -> Scalar {
         let mut nonce_gen_input = [0u8; 64];
-        let h_bytes = h_point.compress().to_bytes();
+        let h_bytes = compressed_h.to_bytes();
 
         nonce_gen_input[..32].copy_from_slice(&secret_extension);
         nonce_gen_input[32..].copy_from_slice(&h_bytes);
@@ -129,9 +128,8 @@ impl VrfProof {
     }
 
     /// Hash points function, following the 03 specification.
-    // todo: we are computing `h.compress()` two times (see above).
     fn compute_challenge(
-        h: &EdwardsPoint,
+        compressed_h: &CompressedEdwardsY,
         gamma: &EdwardsPoint,
         announcement_1: &EdwardsPoint,
         announcement_2: &EdwardsPoint,
@@ -142,7 +140,7 @@ impl VrfProof {
         let mut challenge_hash = Sha512::new();
         challenge_hash.update(SUITE);
         challenge_hash.update(TWO);
-        challenge_hash.update(&h.compress().to_bytes());
+        challenge_hash.update(&compressed_h.to_bytes());
         challenge_hash.update(gamma.compress().as_bytes());
         challenge_hash.update(announcement_1.compress().as_bytes());
         challenge_hash.update(announcement_2.compress().as_bytes());
@@ -183,16 +181,18 @@ impl VrfProof {
         let (secret_scalar, secret_extension) = secret_key.extend();
 
         let h = Self::hash_to_curve(public_key, alpha_string);
+        let compressed_h = h.compress();
         let gamma = secret_scalar * h;
 
         // Now we generate the nonce
-        let k = Self::nonce_generation(secret_extension, h);
+        let k = Self::nonce_generation(secret_extension, compressed_h);
 
         let announcement_base = k * ED25519_BASEPOINT_POINT;
         let announcement_h = k * h;
 
         // Now we compute the challenge
-        let challenge = Self::compute_challenge(&h, &gamma, &announcement_base, &announcement_h);
+        let challenge =
+            Self::compute_challenge(&compressed_h, &gamma, &announcement_base, &announcement_h);
 
         // And finally the response of the sigma protocol
         let response = k + challenge * secret_scalar;
@@ -210,6 +210,7 @@ impl VrfProof {
         alpha_string: &[u8],
     ) -> Result<[u8; OUTPUT_SIZE], VrfError> {
         let h = Self::hash_to_curve(public_key, alpha_string);
+        let compressed_h = h.compress();
 
         let decompressed_pk = match public_key.0.decompress() {
             Some(point) => point,
@@ -227,10 +228,9 @@ impl VrfProof {
         );
 
         // Now we compute the challenge
-        let challenge = Self::compute_challenge(&h, &self.gamma, &U, &V);
+        let challenge = Self::compute_challenge(&compressed_h, &self.gamma, &U, &V);
 
-        // todo: we don't need constant time equality checking
-        if challenge == self.challenge {
+        if challenge.to_bytes()[..16] == self.challenge.to_bytes()[..16] {
             Ok(self.proof_to_hash())
         } else {
             Err(VrfError::VerificationFailed)
