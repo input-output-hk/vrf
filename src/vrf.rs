@@ -1,42 +1,47 @@
+//! VRF related functions, as specified in IETF draft, version 03.
 #![allow(non_snake_case)]
 
-use curve25519_dalek::edwards::{EdwardsPoint, CompressedEdwardsY};
-use curve25519_dalek::scalar::Scalar;
 use curve25519_dalek::constants::ED25519_BASEPOINT_POINT;
+use curve25519_dalek::edwards::{CompressedEdwardsY, EdwardsPoint};
+use curve25519_dalek::scalar::Scalar;
 use curve25519_dalek::traits::VartimeMultiscalarMul;
 
-use super::errors::{VrfError};
+use super::errors::VrfError;
 
-use sha2::{Sha512, Digest};
 use rand::{CryptoRng, RngCore};
+use sha2::{Digest, Sha512};
 use std::iter;
 use std::ops::Neg;
 
-pub const SUITE: &[u8] = &[4u8];
-pub const ONE: &[u8] = &[1u8];
-pub const TWO: &[u8] = &[2u8];
-pub const THREE: &[u8] = &[3u8];
-pub const SECRET_KEY_SIZE: usize = 32;
-pub const EXTENDED_KEY_SIZE: usize = 64;
-pub const SEED_BYTES: usize = 32;
-pub const PUBLIC_KEY_SIZE: usize = 32;
-pub const PROOF_SIZE: usize = 80;
-pub const OUTPUT_SIZE: usize = 64;
+const SUITE: &[u8] = &[4u8];
+const ONE: &[u8] = &[1u8];
+const TWO: &[u8] = &[2u8];
+const THREE: &[u8] = &[3u8];
+const SECRET_KEY_SIZE: usize = 32;
+const SEED_BYTES: usize = 32;
+const PUBLIC_KEY_SIZE: usize = 32;
+const PROOF_SIZE: usize = 80;
+const OUTPUT_SIZE: usize = 64;
 
+/// Secret key, which is formed by `SECRET_KEY_SIZE` bytes.
 pub struct SecretKey([u8; SECRET_KEY_SIZE]);
 
 impl SecretKey {
-    pub fn as_bytes(&self) -> &[u8]{
+    /// View secret key as byte array
+    pub fn as_bytes(&self) -> &[u8] {
         &self.0
     }
 
+    /// Convert a secret key from a byte array
     pub fn from_bytes(bytes: &[u8; SECRET_KEY_SIZE]) -> Self {
         SecretKey(*bytes)
     }
 
+    /// Given a cryptographically secure random number generator `csrng`, this function returns
+    /// a random `SecretKey`
     pub fn generate<R>(csrng: &mut R) -> Self
     where
-        R: CryptoRng + RngCore
+        R: CryptoRng + RngCore,
     {
         let mut seed = [0u8; SEED_BYTES];
 
@@ -44,6 +49,8 @@ impl SecretKey {
         SecretKey(seed)
     }
 
+    /// Given a `SecretKey`, the `extend` function hashes the secret bytes to generate a secret
+    /// scalar, and the `SecretKey` extension (of 32 bytes).
     // todo: this can be improved (edc)
     pub fn extend(&self) -> (Scalar, [u8; 32]) {
         let mut h: Sha512 = Sha512::new();
@@ -62,17 +69,19 @@ impl SecretKey {
         secret_key_bytes[31] |= 64;
 
         (Scalar::from_bits(secret_key_bytes), extension)
-
     }
 }
 
+/// VRF Public key, which is formed by an Edwards point (in compressed form).
 pub struct PublicKey(CompressedEdwardsY);
 
 impl PublicKey {
+    /// View the `PublicKey` as bytes
     pub fn as_bytes(&self) -> &[u8; PUBLIC_KEY_SIZE] {
         self.0.as_bytes()
     }
 
+    /// Generate a `PublicKey` from an array of `PUBLIC_KEY_SIZE` bytes.
     pub fn from_bytes(bytes: &[u8; PUBLIC_KEY_SIZE]) -> Self {
         PublicKey(CompressedEdwardsY::from_slice(bytes))
     }
@@ -87,15 +96,18 @@ impl<'a> From<&'a SecretKey> for PublicKey {
     }
 }
 
-pub struct VrfProof{
+/// VRF proof, which is formed by an `EdwardsPoint`, and two `Scalar`s
+pub struct VrfProof {
     gamma: EdwardsPoint,
     challenge: Scalar,
-    response: Scalar
+    response: Scalar,
 }
 
 impl VrfProof {
-    /// Hash to curve function, following the 03 specification, and the libsodium implementation
-    /// with `ONE` as a separator. This one is different to the one implemented in curve25519_dalek
+    /// Hash to curve function, following the 03 specification.
+    // Note that in order to be compatible with the implementation over libsodium, we rely on using
+    // a fork of curve25519-dalek. This is not expected to hold for long, as the implementation
+    // of the VRF over libsodium will soon change.
     fn hash_to_curve(public_key: &PublicKey, alpha_string: &[u8]) -> EdwardsPoint {
         let mut hash_input = Vec::with_capacity(2 + PUBLIC_KEY_SIZE + alpha_string.len());
         hash_input.extend_from_slice(SUITE);
@@ -105,6 +117,7 @@ impl VrfProof {
         EdwardsPoint::hash_from_bytes::<Sha512>(&hash_input)
     }
 
+    /// Nonce generation function, following the 03 specification.
     fn nonce_generation(secret_extension: [u8; 32], h_point: EdwardsPoint) -> Scalar {
         let mut nonce_gen_input = [0u8; 64];
         let h_bytes = h_point.compress().to_bytes();
@@ -115,8 +128,14 @@ impl VrfProof {
         Scalar::hash_from_bytes::<Sha512>(&nonce_gen_input)
     }
 
+    /// Hash points function, following the 03 specification.
     // todo: we are computing `h.compress()` two times (see above).
-    fn compute_challenge(h: &EdwardsPoint, gamma: &EdwardsPoint, announcement_1: &EdwardsPoint, announcement_2: &EdwardsPoint) -> Scalar {
+    fn compute_challenge(
+        h: &EdwardsPoint,
+        gamma: &EdwardsPoint,
+        announcement_1: &EdwardsPoint,
+        announcement_2: &EdwardsPoint,
+    ) -> Scalar {
         // we use a scalar of 16 bytes (instead of 32), but store it in 32 bits, as that is what
         // `Scalar::from_bits()` expects.
         let mut scalar_bytes = [0u8; 32];
@@ -133,6 +152,9 @@ impl VrfProof {
         Scalar::from_bits(scalar_bytes)
     }
 
+    /// Convert the proof into its byte representation. As specified in the 03 specification, the
+    /// challenge can be represented using only 16 bytes, and therefore use only the first 16
+    /// bytes of the `Scalar`.
     pub fn to_bytes(&self) -> [u8; PROOF_SIZE] {
         let mut proof = [0u8; PROOF_SIZE];
         proof[..32].copy_from_slice(self.gamma.compress().as_bytes());
@@ -142,6 +164,8 @@ impl VrfProof {
         proof
     }
 
+    /// Proof to hash function, following the 03 specification. This computes the output of the VRF
+    /// function.
     fn proof_to_hash(&self) -> [u8; OUTPUT_SIZE] {
         let mut output = [0u8; OUTPUT_SIZE];
         let gamma_cofac = self.gamma.mul_by_cofactor();
@@ -154,6 +178,7 @@ impl VrfProof {
         output
     }
 
+    /// Generate a new VRF proof
     pub fn generate(public_key: &PublicKey, secret_key: &SecretKey, alpha_string: &[u8]) -> Self {
         let (secret_scalar, secret_extension) = secret_key.extend();
 
@@ -171,10 +196,19 @@ impl VrfProof {
 
         // And finally the response of the sigma protocol
         let response = k + challenge * secret_scalar;
-        Self { gamma, challenge, response }
+        Self {
+            gamma,
+            challenge,
+            response,
+        }
     }
 
-    pub fn verify(&self, public_key: &PublicKey, alpha_string: &[u8]) -> Result<[u8; OUTPUT_SIZE], VrfError> {
+    /// Verify VRF function, following the 03 specification.
+    pub fn verify(
+        &self,
+        public_key: &PublicKey,
+        alpha_string: &[u8],
+    ) -> Result<[u8; OUTPUT_SIZE], VrfError> {
         let h = Self::hash_to_curve(public_key, alpha_string);
 
         let decompressed_pk = match public_key.0.decompress() {
@@ -182,12 +216,14 @@ impl VrfProof {
             None => return Err(VrfError::DecompressionFailed),
         };
 
-        let U = EdwardsPoint::vartime_double_scalar_mul_basepoint(&self.challenge.neg(), &decompressed_pk, &self.response);
+        let U = EdwardsPoint::vartime_double_scalar_mul_basepoint(
+            &self.challenge.neg(),
+            &decompressed_pk,
+            &self.response,
+        );
         let V = EdwardsPoint::vartime_multiscalar_mul(
-            iter::once(self.response)
-                .chain(iter::once(self.challenge.neg())),
-            iter::once(h)
-                .chain(iter::once(self.gamma))
+            iter::once(self.response).chain(iter::once(self.challenge.neg())),
+            iter::once(h).chain(iter::once(self.gamma)),
         );
 
         // Now we compute the challenge
@@ -196,8 +232,7 @@ impl VrfProof {
         // todo: we don't need constant time equality checking
         if challenge == self.challenge {
             Ok(self.proof_to_hash())
-        }
-        else {
+        } else {
             Err(VrfError::VerificationFailed)
         }
     }
@@ -208,7 +243,7 @@ mod test {
     use super::*;
     use rand::rngs::OsRng;
 
-    # [test]
+    #[test]
     fn verify() {
         let alpha_string = [0u8; 23];
         let secret_key = SecretKey::generate(&mut OsRng);

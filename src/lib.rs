@@ -1,11 +1,4 @@
-pub mod constants;
+#![warn(missing_docs, rust_2018_idioms)]
+//! VRF implementation
+pub mod errors;
 pub mod vrf;
-mod errors;
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn it_works() {
-        assert_eq!(2 + 2, 4);
-    }
-}
