@@ -1,39 +1,51 @@
-//! VRF related functions, as specified in IETF draft, version 03.
+//! This module implements `ECVRF-ED25519-SHA512-Elligator2`, as specified in IETF draft,
+//! [version 03](https://datatracker.ietf.org/doc/html/draft-irtf-cfrg-vrf-03).
+//! The current implementation of this vrf does not follow the latest standard definition.
+//! However, the goal of this crate is to be compatible with the VRF implementation over
+//! [libsodium](https://github.com/input-output-hk/libsodium). In particular, the differences
+//! that completely modify the output of the VRF function are the following:
+//! - Computation of the Elligator2 function performs a `bit` modification where it shouldn't,
+//!   resulting in a completely different VRF output. [Here](https://github.com/input-output-hk/libsodium/blob/draft-irtf-cfrg-vrf-03/src/libsodium/crypto_vrf/ietfdraft03/convert.c#L84)
+//!   we clear the sign bit, when it should be cleared only [here](https://github.com/input-output-hk/libsodium/blob/draft-irtf-cfrg-vrf-03/src/libsodium/crypto_core/ed25519/ref10/ed25519_ref10.c#L2527).
+//!   This does not reduce the security of the scheme, but makes it incompatible with other
+//!   implementations.
+//! - The latest ietf draft no longer includes the suite_string as an input to the `hash_to_curve`
+//!   function. Furthermore, it concatenates a zero byte when computing the `proof_to_hash`
+//!   function. These changes can be easily seen in the [diff between version 6 and 7](https://www.ietf.org/rfcdiff?difftype=--hwdiff&url2=draft-irtf-cfrg-vrf-07.txt).
+//!
+//! To provide compatibility with libsodium's implementation, we rely on a fork. Until this is
+//! not resolved, one should not use this crate in production.
 #![allow(non_snake_case)]
-
 use curve25519_dalek::constants::ED25519_BASEPOINT_POINT;
 use curve25519_dalek::edwards::{CompressedEdwardsY, EdwardsPoint};
 use curve25519_dalek::scalar::Scalar;
 use curve25519_dalek::traits::VartimeMultiscalarMul;
 
+use super::constants::*;
 use super::errors::VrfError;
 
 use rand::{CryptoRng, RngCore};
 use sha2::{Digest, Sha512};
+use std::fmt::Debug;
 use std::iter;
 use std::ops::Neg;
 
-const SUITE: &[u8] = &[4u8];
-const ONE: &[u8] = &[1u8];
-const TWO: &[u8] = &[2u8];
-const THREE: &[u8] = &[3u8];
-const SECRET_KEY_SIZE: usize = 32;
-const SEED_BYTES: usize = 32;
-const PUBLIC_KEY_SIZE: usize = 32;
-const PROOF_SIZE: usize = 80;
-const OUTPUT_SIZE: usize = 64;
-
-/// Secret key, which is formed by `SECRET_KEY_SIZE` bytes.
-pub struct SecretKey([u8; SECRET_KEY_SIZE]);
+/// Secret key, which is formed by `SEED_SIZE` bytes.
+pub struct SecretKey([u8; SEED_SIZE]);
 
 impl SecretKey {
-    /// View secret key as byte array
+    /// View `SecretKey` as byte array
     pub fn as_bytes(&self) -> &[u8] {
         &self.0
     }
 
-    /// Convert a secret key from a byte array
-    pub fn from_bytes(bytes: &[u8; SECRET_KEY_SIZE]) -> Self {
+    /// Convert a `SecretKey` into its byte representation
+    pub fn to_bytes(&self) -> [u8; SEED_SIZE] {
+        self.0
+    }
+
+    /// Convert a `SecretKey` from a byte array
+    pub fn from_bytes(bytes: &[u8; SEED_SIZE]) -> Self {
         SecretKey(*bytes)
     }
 
@@ -43,7 +55,7 @@ impl SecretKey {
     where
         R: CryptoRng + RngCore,
     {
-        let mut seed = [0u8; SEED_BYTES];
+        let mut seed = [0u8; SEED_SIZE];
 
         csrng.fill_bytes(&mut seed);
         SecretKey(seed)
@@ -72,12 +84,24 @@ impl SecretKey {
 }
 
 /// VRF Public key, which is formed by an Edwards point (in compressed form).
+#[derive(Copy, Clone, Default, Eq, PartialEq)]
 pub struct PublicKey(CompressedEdwardsY);
+
+impl Debug for PublicKey {
+    fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+        write!(f, "PublicKey({:?}))", self.0)
+    }
+}
 
 impl PublicKey {
     /// View the `PublicKey` as bytes
     pub fn as_bytes(&self) -> &[u8; PUBLIC_KEY_SIZE] {
         self.0.as_bytes()
+    }
+
+    /// Convert a `PublicKey` into its byte representation.
+    pub fn to_bytes(&self) -> [u8; PUBLIC_KEY_SIZE] {
+        self.0.to_bytes()
     }
 
     /// Generate a `PublicKey` from an array of `PUBLIC_KEY_SIZE` bytes.
@@ -150,6 +174,28 @@ impl VrfProof {
         Scalar::from_bits(scalar_bytes)
     }
 
+    /// Generate a `VrfProof` from an array of bytes with the correct size
+    pub fn from_bytes(bytes: &[u8; PROOF_SIZE]) -> Result<Self, VrfError> {
+        let gamma = CompressedEdwardsY::from_slice(&bytes[..32])
+            .decompress()
+            .ok_or(VrfError::DecompressionFailed)?;
+
+        let mut challenge_bytes = [0u8; 32];
+        challenge_bytes[..16].copy_from_slice(&bytes[32..48]);
+        let challenge = Scalar::from_bits(challenge_bytes);
+
+        let mut response_bytes = [0u8; 32];
+        response_bytes.copy_from_slice(&bytes[48..]);
+        let response =
+            Scalar::from_canonical_bytes(response_bytes).ok_or(VrfError::DecompressionFailed)?;
+
+        Ok(Self {
+            gamma,
+            challenge,
+            response,
+        })
+    }
+
     /// Convert the proof into its byte representation. As specified in the 03 specification, the
     /// challenge can be represented using only 16 bytes, and therefore use only the first 16
     /// bytes of the `Scalar`.
@@ -212,10 +258,10 @@ impl VrfProof {
         let h = Self::hash_to_curve(public_key, alpha_string);
         let compressed_h = h.compress();
 
-        let decompressed_pk = match public_key.0.decompress() {
-            Some(point) => point,
-            None => return Err(VrfError::DecompressionFailed),
-        };
+        let decompressed_pk = public_key
+            .0
+            .decompress()
+            .ok_or(VrfError::DecompressionFailed)?;
 
         let U = EdwardsPoint::vartime_double_scalar_mul_basepoint(
             &self.challenge.neg(),
@@ -244,7 +290,7 @@ mod test {
     use rand::rngs::OsRng;
 
     #[test]
-    fn verify() {
+    fn verify_vrf() {
         let alpha_string = [0u8; 23];
         let secret_key = SecretKey::generate(&mut OsRng);
         let public_key = PublicKey::from(&secret_key);
@@ -255,5 +301,38 @@ mod test {
 
         let false_key = PublicKey(EdwardsPoint::hash_from_bytes::<Sha512>(&[0u8]).compress());
         assert!(vrf_proof.verify(&false_key, &alpha_string).is_err())
+    }
+
+    #[test]
+    fn proof_serialisation() {
+        let alpha_string = [0u8; 23];
+        let secret_key = SecretKey::generate(&mut OsRng);
+        let public_key = PublicKey::from(&secret_key);
+
+        let vrf_proof = VrfProof::generate(&public_key, &secret_key, &alpha_string);
+        let serialised_proof = vrf_proof.to_bytes();
+
+        let deserialised_proof = VrfProof::from_bytes(&serialised_proof);
+        assert!(deserialised_proof.is_ok());
+
+        assert!(deserialised_proof
+            .unwrap()
+            .verify(&public_key, &alpha_string)
+            .is_ok());
+    }
+
+    #[test]
+    fn keypair_serialisation() {
+        let secret_key = SecretKey::generate(&mut OsRng);
+        let public_key = PublicKey::from(&secret_key);
+
+        let serialised_sk = secret_key.to_bytes();
+        let deserialised_sk = SecretKey::from_bytes(&serialised_sk);
+        let pk_from_ser = PublicKey::from(&deserialised_sk);
+        assert_eq!(public_key, pk_from_ser);
+
+        let serialised_pk = public_key.to_bytes();
+        let deserialised_pk = PublicKey::from_bytes(&serialised_pk);
+        assert_eq!(public_key, deserialised_pk);
     }
 }
