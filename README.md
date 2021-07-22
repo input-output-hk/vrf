@@ -13,8 +13,15 @@ Currently, the tests pass because we are using forked curve25519-dalek
 crate. The implementation of the vrf over libsodium differs in the elligator2
 function, which would make this crate incompatible with the libsodium generated
 outputs. `curve25519-dalek`'s API does not allow us to modify the elligator2 
-function, which makes use rely on a fork. We are actively working in the improvement
-of the vrf implementation, and this problem should be resolved soon. 
+function, which makes use rely on a fork. In particular, [here](https://github.com/input-output-hk/libsodium/blob/draft-irtf-cfrg-vrf-03/src/libsodium/crypto_vrf/ietfdraft03/convert.c#L84)
+we clear the sign bit, when it should be cleared only [here](https://github.com/input-output-hk/libsodium/blob/draft-irtf-cfrg-vrf-03/src/libsodium/crypto_core/ed25519/ref10/ed25519_ref10.c#L2527)
+(according to the latest standards).
+This does not reduce the security of the scheme, but makes it incompatible with other
+implementations. 
+
+We are actively working in the improvement
+of the vrf implementation, and this problem will be resolved soon. This crate MUST NOT
+be used in production until this problem is resolved.
 
 ## Minimal working example
 To effectively run the tests comparing the VRF implementation and the libsodium
