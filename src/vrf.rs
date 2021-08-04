@@ -62,8 +62,10 @@ impl SecretKey {
         Self::from_bytes(&seed)
     }
 
-    /// Given a `SecretKey`, the `extend` function hashes the secret bytes to generate a secret
-    /// scalar, and the `SecretKey` extension (of 32 bytes).
+    /// Given a `SecretKey`, the `extend` function hashes the secret bytes to an output of 64 bytes,
+    /// and then uses the first 32 bytes to generate a secret
+    /// scalar. The function returns the secret scalar and the remaining 32 bytes
+    /// (named the `SecretKey` extension).
     pub fn extend(&self) -> (Scalar, [u8; 32]) {
         let mut h: Sha512 = Sha512::new();
         let mut extended = [0u8; 64];
@@ -175,7 +177,8 @@ impl VrfProof {
         Scalar::from_bits(scalar_bytes)
     }
 
-    /// Generate a `VrfProof` from an array of bytes with the correct size
+    /// Generate a `VrfProof` from an array of bytes with the correct size. This function does not
+    /// check the validity of the proof.
     pub fn from_bytes(bytes: &[u8; PROOF_SIZE]) -> Result<Self, VrfError> {
         let gamma = CompressedEdwardsY::from_slice(&bytes[..32])
             .decompress()
@@ -209,8 +212,9 @@ impl VrfProof {
         proof
     }
 
-    /// Proof to hash function, following the 03 specification. This computes the output of the VRF
-    /// function.
+    /// `proof_to_hash` function, following the 03 specification. This computes the output of the VRF
+    /// function. In particular, this function computes
+    /// SHA512(SUITE || THREE || Gamma)
     fn proof_to_hash(&self) -> [u8; OUTPUT_SIZE] {
         let mut output = [0u8; OUTPUT_SIZE];
         let gamma_cofac = self.gamma.mul_by_cofactor();
@@ -223,7 +227,12 @@ impl VrfProof {
         output
     }
 
-    /// Generate a new VRF proof
+    /// Generate a new VRF proof following the 03 standard. It proceeds as follows:
+    /// - Extend the secret key, into a `secret_scalar` and the `secret_extension`
+    /// - Evaluate `hash_to_curve` over PK || alpha_string to get `H`
+    /// - Compute `Gamma = secret_scalar *  H`
+    /// - Generate a proof of discrete logarithm equality between `PK` and `Gamma` with
+    ///   bases `generator` and `H` respectively.
     pub fn generate(public_key: &PublicKey, secret_key: &SecretKey, alpha_string: &[u8]) -> Self {
         let (secret_scalar, secret_extension) = secret_key.extend();
 
