@@ -40,7 +40,7 @@ use curve25519_dalek::{
 use super::constants::*;
 use super::errors::VrfError;
 
-use rand::{CryptoRng, RngCore};
+use rand_core::{CryptoRng, RngCore};
 use sha2::{Digest, Sha512};
 use std::fmt::Debug;
 use std::iter;
@@ -388,12 +388,13 @@ impl VrfProof {
 #[cfg(test)]
 mod test {
     use super::*;
-    use rand::rngs::OsRng;
+    use rand_core::SeedableRng;
+    use rand_chacha::ChaCha20Rng;
 
     #[test]
     fn verify_vrf() {
         let alpha_string = [0u8; 23];
-        let secret_key = SecretKey::generate(&mut OsRng);
+        let secret_key = SecretKey::generate(&mut ChaCha20Rng::from_seed([0u8; 32]));
         let public_key = PublicKey::from(&secret_key);
 
         let vrf_proof = VrfProof::generate(&public_key, &secret_key, &alpha_string);
@@ -407,7 +408,7 @@ mod test {
     #[test]
     fn proof_serialisation() {
         let alpha_string = [0u8; 23];
-        let secret_key = SecretKey::generate(&mut OsRng);
+        let secret_key = SecretKey::generate(&mut ChaCha20Rng::from_seed([0u8; 32]));
         let public_key = PublicKey::from(&secret_key);
 
         let vrf_proof = VrfProof::generate(&public_key, &secret_key, &alpha_string);
@@ -424,7 +425,7 @@ mod test {
 
     #[test]
     fn keypair_serialisation() {
-        let secret_key = SecretKey::generate(&mut OsRng);
+        let secret_key = SecretKey::generate(&mut ChaCha20Rng::from_seed([0u8; 32]));
         let public_key = PublicKey::from(&secret_key);
 
         let serialised_sk = secret_key.to_bytes();
