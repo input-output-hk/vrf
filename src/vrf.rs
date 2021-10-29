@@ -1,7 +1,9 @@
-//! This module implements `ECVRF-ED25519-SHA512-Elligator2`, as specified in IETF draft,
+//! This module implements `ECVRF-ED25519-SHA512-Elligator2`, as specified in IETF draft. If one
+//! uses the defaults flags, it uses [version 09](https://datatracker.ietf.org/doc/html/draft-irtf-cfrg-vrf-09),
+//! otherwise, one can specify to use
 //! [version 03](https://datatracker.ietf.org/doc/html/draft-irtf-cfrg-vrf-03).
-//! The current implementation of this vrf does not follow the latest standard definition.
-//! However, the goal of this crate is to be compatible with the VRF implementation over
+//! However, the goal to allow for an older version of this algorithm is to be compatible with the
+//! VRF implementation over
 //! [libsodium](https://github.com/input-output-hk/libsodium). In particular, the differences
 //! that completely modify the output of the VRF function are the following:
 //! - Computation of the Elligator2 function performs a `bit` modification where it shouldn't,
@@ -12,15 +14,28 @@
 //! - The latest ietf draft no longer includes the suite_string as an input to the `hash_to_curve`
 //!   function. Furthermore, it concatenates a zero byte when computing the `proof_to_hash`
 //!   function. These changes can be easily seen in the [diff between version 6 and 7](https://www.ietf.org/rfcdiff?difftype=--hwdiff&url2=draft-irtf-cfrg-vrf-07.txt).
+//! - The Elligator2 function of the latest [hash-to-curve draft](https://datatracker.ietf.org/doc/html/draft-irtf-cfrg-hash-to-curve-11)
+//!   is different to that specified in the VRF standard.
 //!
-//! To provide compatibility with libsodium's implementation, we rely on a fork of
-//! dalek-cryptography, to counter the non-compatible `bit` modification. Until this is
-//! not resolved, one should not use this crate in production.
+//! To provide compatibility with libsodium's implementation (available with the `version03` flag),
+//! we rely on a fork of dalek-cryptography, to counter the non-compatible `bit` modification.
 #![allow(non_snake_case)]
-use curve25519_dalek::constants::ED25519_BASEPOINT_POINT;
-use curve25519_dalek::edwards::{CompressedEdwardsY, EdwardsPoint};
-use curve25519_dalek::scalar::Scalar;
-use curve25519_dalek::traits::VartimeMultiscalarMul;
+
+#[cfg(not(feature = "version09"))]
+#[cfg(feature = "version03")]
+use curve25519_dalek_fork::{
+    constants::ED25519_BASEPOINT_POINT,
+    edwards::{CompressedEdwardsY, EdwardsPoint},
+    scalar::Scalar,
+    traits::VartimeMultiscalarMul
+};
+#[cfg(feature = "version09")]
+use curve25519_dalek::{
+    constants::ED25519_BASEPOINT_POINT,
+    edwards::{CompressedEdwardsY, EdwardsPoint},
+    scalar::Scalar,
+    traits::VartimeMultiscalarMul
+};
 
 use super::constants::*;
 use super::errors::VrfError;
@@ -130,16 +145,46 @@ pub struct VrfProof {
 }
 
 impl VrfProof {
+    #[cfg(not(feature = "version09"))]
+    #[cfg(feature = "version03")]
     /// Hash to curve function, following the 03 specification.
     // Note that in order to be compatible with the implementation over libsodium, we rely on using
-    // a fork of curve25519-dalek. This is not expected to hold for long, as the implementation
-    // of the VRF over libsodium will soon change.
+    // a fork of curve25519-dalek.
     fn hash_to_curve(public_key: &PublicKey, alpha_string: &[u8]) -> EdwardsPoint {
         let mut hash_input = Vec::with_capacity(2 + PUBLIC_KEY_SIZE + alpha_string.len());
         hash_input.extend_from_slice(SUITE);
         hash_input.extend_from_slice(ONE);
         hash_input.extend_from_slice(public_key.as_bytes());
         hash_input.extend_from_slice(alpha_string);
+        EdwardsPoint::hash_from_bytes::<Sha512>(&hash_input)
+    }
+
+    #[cfg(feature = "version09")]
+    /// Computing the `hash_to_curve` using try and increment. In order to make the
+    /// function always terminate, we bound  the number of tries to 32. If the try
+    /// 32 fails, which happens with probability around 1/2^32, we compute the
+    /// Elligator mapping. This diverges from the standard: the latter describes
+    /// the function with an infinite loop. To avoid infinite loops or possibly
+    /// non-terminating functions, we adopt this modification.
+    fn hash_to_curve(public_key: &PublicKey, alpha_string: &[u8]) -> EdwardsPoint {
+        let mut counter = 0u8;
+        let mut hash_input = Vec::with_capacity(4 + PUBLIC_KEY_SIZE + alpha_string.len());
+        hash_input.extend_from_slice(SUITE);
+        hash_input.extend_from_slice(ONE);
+        hash_input.extend_from_slice(public_key.as_bytes());
+        hash_input.extend_from_slice(alpha_string);
+        hash_input.extend_from_slice(&counter.to_be_bytes());
+        hash_input.extend_from_slice(ZERO);
+
+        for _ in 0..32 {
+            hash_input[2 + PUBLIC_KEY_SIZE + alpha_string.len()] = counter.to_be_bytes()[0];
+            if let Some(result) = CompressedEdwardsY::from_slice(&Sha512::digest(&hash_input)[..32]).decompress() {
+                return result.mul_by_cofactor();
+            };
+
+            counter += 1;
+        }
+
         EdwardsPoint::hash_from_bytes::<Sha512>(&hash_input)
     }
 
@@ -154,6 +199,8 @@ impl VrfProof {
         Scalar::hash_from_bytes::<Sha512>(&nonce_gen_input)
     }
 
+    #[cfg(not(feature = "version09"))]
+    #[cfg(feature = "version03")]
     /// Hash points function, following the 03 specification.
     fn compute_challenge(
         compressed_h: &CompressedEdwardsY,
@@ -171,6 +218,31 @@ impl VrfProof {
         challenge_hash.update(gamma.compress().as_bytes());
         challenge_hash.update(announcement_1.compress().as_bytes());
         challenge_hash.update(announcement_2.compress().as_bytes());
+
+        scalar_bytes[..16].copy_from_slice(&challenge_hash.finalize().as_slice()[..16]);
+
+        Scalar::from_bits(scalar_bytes)
+    }
+
+    #[cfg(feature = "version09")]
+    /// Hash points function, following the 09 specification.
+    fn compute_challenge(
+        compressed_h: &CompressedEdwardsY,
+        gamma: &EdwardsPoint,
+        announcement_1: &EdwardsPoint,
+        announcement_2: &EdwardsPoint,
+    ) -> Scalar {
+        // we use a scalar of 16 bytes (instead of 32), but store it in 32 bits, as that is what
+        // `Scalar::from_bits()` expects.
+        let mut scalar_bytes = [0u8; 32];
+        let mut challenge_hash = Sha512::new();
+        challenge_hash.update(SUITE);
+        challenge_hash.update(TWO);
+        challenge_hash.update(&compressed_h.to_bytes());
+        challenge_hash.update(gamma.compress().as_bytes());
+        challenge_hash.update(announcement_1.compress().as_bytes());
+        challenge_hash.update(announcement_2.compress().as_bytes());
+        challenge_hash.update(ZERO);
 
         scalar_bytes[..16].copy_from_slice(&challenge_hash.finalize().as_slice()[..16]);
 
@@ -212,6 +284,8 @@ impl VrfProof {
         proof
     }
 
+    #[cfg(not(feature = "version09"))]
+    #[cfg(feature = "version03")]
     /// `proof_to_hash` function, following the 03 specification. This computes the output of the VRF
     /// function. In particular, this function computes
     /// SHA512(SUITE || THREE || Gamma)
@@ -222,6 +296,23 @@ impl VrfProof {
         hash.update(SUITE);
         hash.update(THREE);
         hash.update(gamma_cofac.compress().as_bytes());
+
+        output.copy_from_slice(hash.finalize().as_slice());
+        output
+    }
+
+    #[cfg(feature = "version09")]
+    /// `proof_to_hash` function, following the 09 specification. This computes the output of the VRF
+    /// function. In particular, this function computes
+    /// SHA512(SUITE || THREE || Gamma)
+    fn proof_to_hash(&self) -> [u8; OUTPUT_SIZE] {
+        let mut output = [0u8; OUTPUT_SIZE];
+        let gamma_cofac = self.gamma.mul_by_cofactor();
+        let mut hash = Sha512::new();
+        hash.update(SUITE);
+        hash.update(THREE);
+        hash.update(gamma_cofac.compress().as_bytes());
+        hash.update(ZERO);
 
         output.copy_from_slice(hash.finalize().as_slice());
         output
@@ -346,6 +437,8 @@ mod test {
         assert_eq!(public_key, deserialised_pk);
     }
 
+    #[cfg(not(feature = "version09"))]
+    #[cfg(feature = "version03")]
     //////////////////////////////////////////////////////////////////////////////////////////////////
     // VRF test vector from                                                                         //
     //  https://github.com/input-output-hk/libsodium/blob/draft-irtf-cfrg-vrf-03/test/default/vrf.c //
@@ -568,6 +661,36 @@ mod test {
                 "31cdab620bdf8231abcee32d615af34649e69b132286cc59f950f2355284d953a6b7ea975a2fd89af443a15c076399f390c94a6aa3f5dbf8e1576780a7e16fa48c3a095972ac3ab1e1aa076d9246ac09",
                 "152dca76912d4a38606f46d90d4b878b3e60b9cef8740ef322290f18a67ad48e716f412e7013d5e1ee4c4aaf5e7f86d158249bcd067f5e62b62c25b7166b9429",
                 "230dd4c855c133c5b3c24a72af9bbbc48205984ea4f2045feaac17fe1af9",
+            ],
+        ]
+    }
+
+    #[cfg(feature = "version09")]
+    //////////////////////////////////////////////////////////////////////////////////////////////////
+    // VRF test vector from standard                                                                //
+    //////////////////////////////////////////////////////////////////////////////////////////////////
+    fn test_vectors() -> Vec<Vec<&'static str>> {
+        vec![
+            vec![
+                "9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60",
+                "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a",
+                "8657106690b5526245a92b003bb079ccd1a92130477671f6fc01ad16f26f723f5e8bd1839b414219e8626d393787a192241fc442e6569e96c462f62b8079b9ed83ff2ee21c90c7c398802fdeebea4001",
+                "90cf1df3b703cce59e2a35b925d411164068269d7b2d29f3301c03dd757876ff66b71dda49d2de59d03450451af026798e8f81cd2e333de5cdf4f3e140fdd8ae",
+                "",
+            ],
+            vec![
+                "4ccd089b28ff96da9db6c346ec114e0f5b8a319f35aba624da8cf6ed4fb8a6fb",
+                "3d4017c3e843895a92b70aa74d1b7ebc9c982ccf2ec4968cc0cd55f12af4660c",
+                "f3141cd382dc42909d19ec5110469e4feae18300e94f304590abdced48aed593f7eaf3eb2f1a968cba3f6e23b386aeeaab7b1ea44a256e811892e13eeae7c9f6ea8992557453eac11c4d5476b1f35a08",
+                "eb4440665d3891d668e7e0fcaf587f1b4bd7fbfe99d0eb2211ccec90496310eb5e33821bc613efb94db5e5b54c70a848a0bef4553a41befc57663b56373a5031",
+                "72",
+            ],
+            vec![
+                "c5aa8df43f9f837bedb7442f31dcb7b166d38535076f094b85ce3a2e0b4458f7",
+                "fc51cd8e6218a1a38da47ed00230f0580816ed13ba3303ac5deb911548908025",
+                "9bc0f79119cc5604bf02d23b4caede71393cedfbb191434dd016d30177ccbf80e29dc513c01c3a980e0e545bcd848222d08a6c3e3665ff5a4cab13a643bef812e284c6b2ee063a2cb4f456794723ad0a",
+                "645427e5d00c62a23fb703732fa5d892940935942101e456ecca7bb217c61c452118fec1219202a0edcf038bb6373241578be7217ba85a2687f7a0310b2df19f",
+                "af82",
             ],
         ]
     }
