@@ -304,7 +304,7 @@ impl VrfProof {
     #[cfg(feature = "version09")]
     /// `proof_to_hash` function, following the 09 specification. This computes the output of the VRF
     /// function. In particular, this function computes
-    /// SHA512(SUITE || THREE || Gamma)
+    /// SHA512(SUITE || THREE || Gamma || ZERO)
     fn proof_to_hash(&self) -> [u8; OUTPUT_SIZE] {
         let mut output = [0u8; OUTPUT_SIZE];
         let gamma_cofac = self.gamma.mul_by_cofactor();
@@ -363,6 +363,10 @@ impl VrfProof {
             .0
             .decompress()
             .ok_or(VrfError::DecompressionFailed)?;
+
+        if decompressed_pk.is_small_order() {
+            return Err(VrfError::PkSmallOrder);
+        }
 
         let U = EdwardsPoint::vartime_double_scalar_mul_basepoint(
             &self.challenge.neg(),

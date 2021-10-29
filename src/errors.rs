@@ -10,4 +10,7 @@ pub enum VrfError {
     /// This error occurs when an `EdwardsPoint` decompression fails
     #[error("Decompression failed")]
     DecompressionFailed,
+    /// This error occurs when a public key has small order
+    #[error("PK has small order")]
+    PkSmallOrder
 }
