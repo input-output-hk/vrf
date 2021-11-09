@@ -1,8 +1,11 @@
+//! VRF implementation following
+//! [version 03](https://datatracker.ietf.org/doc/html/draft-irtf-cfrg-vrf-03)
+//! of the draft.
 use curve25519_dalek_fork::{
     constants::ED25519_BASEPOINT_POINT,
     edwards::{CompressedEdwardsY, EdwardsPoint},
     scalar::Scalar,
-    traits::VartimeMultiscalarMul
+    traits::VartimeMultiscalarMul,
 };
 
 use super::constants::*;
@@ -18,29 +21,29 @@ use std::ops::Neg;
 pub const PROOF_SIZE: usize = 80;
 
 /// Secret key, which is formed by `SEED_SIZE` bytes.
-pub(crate) struct SecretKey03([u8; SEED_SIZE]);
+pub struct SecretKey03([u8; SEED_SIZE]);
 
 impl SecretKey03 {
     /// View `SecretKey` as byte array
-    pub(crate) fn as_bytes(&self) -> &[u8] {
+    pub fn as_bytes(&self) -> &[u8] {
         &self.0
     }
 
     /// Convert a `SecretKey` into its byte representation
-    pub(crate) fn to_bytes(&self) -> [u8; SEED_SIZE] {
+    pub fn to_bytes(&self) -> [u8; SEED_SIZE] {
         self.0
     }
 
     /// Convert a `SecretKey` from a byte array
-    pub(crate) fn from_bytes(bytes: &[u8; SEED_SIZE]) -> Self {
-        SecretKey(*bytes)
+    pub fn from_bytes(bytes: &[u8; SEED_SIZE]) -> Self {
+        SecretKey03(*bytes)
     }
 
     /// Given a cryptographically secure random number generator `csrng`, this function returns
     /// a random `SecretKey`
-    pub(crate) fn generate<R>(csrng: &mut R) -> Self
-        where
-            R: CryptoRng + RngCore,
+    pub fn generate<R>(csrng: &mut R) -> Self
+    where
+        R: CryptoRng + RngCore,
     {
         let mut seed = [0u8; SEED_SIZE];
 
@@ -52,7 +55,7 @@ impl SecretKey03 {
     /// and then uses the first 32 bytes to generate a secret
     /// scalar. The function returns the secret scalar and the remaining 32 bytes
     /// (named the `SecretKey` extension).
-    pub(crate) fn extend(&self) -> (Scalar, [u8; 32]) {
+    pub fn extend(&self) -> (Scalar, [u8; 32]) {
         let mut h: Sha512 = Sha512::new();
         let mut extended = [0u8; 64];
         let mut secret_key_bytes = [0u8; 32];
@@ -74,22 +77,28 @@ impl SecretKey03 {
 
 /// VRF Public key, which is formed by an Edwards point (in compressed form).
 #[derive(Copy, Clone, Default, Eq, PartialEq)]
-pub(crate) struct PublicKey03(CompressedEdwardsY);
+pub struct PublicKey03(CompressedEdwardsY);
+
+impl Debug for PublicKey03 {
+    fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+        write!(f, "PublicKey({:?}))", self.0)
+    }
+}
 
 impl PublicKey03 {
     /// View the `PublicKey` as bytes
-    pub(crate) fn as_bytes(&self) -> &[u8; PUBLIC_KEY_SIZE] {
+    pub fn as_bytes(&self) -> &[u8; PUBLIC_KEY_SIZE] {
         self.0.as_bytes()
     }
 
     /// Convert a `PublicKey` into its byte representation.
-    pub(crate) fn to_bytes(&self) -> [u8; PUBLIC_KEY_SIZE] {
+    pub fn to_bytes(self) -> [u8; PUBLIC_KEY_SIZE] {
         self.0.to_bytes()
     }
 
     /// Generate a `PublicKey` from an array of `PUBLIC_KEY_SIZE` bytes.
-    pub(crate) fn from_bytes(bytes: &[u8; PUBLIC_KEY_SIZE]) -> Self {
-        PublicKey(CompressedEdwardsY::from_slice(bytes))
+    pub fn from_bytes(bytes: &[u8; PUBLIC_KEY_SIZE]) -> Self {
+        PublicKey03(CompressedEdwardsY::from_slice(bytes))
     }
 }
 
@@ -103,7 +112,7 @@ impl<'a> From<&'a SecretKey03> for PublicKey03 {
 }
 
 /// VRF proof, which is formed by an `EdwardsPoint`, and two `Scalar`s
-pub(crate) struct VrfProof03 {
+pub struct VrfProof03 {
     gamma: EdwardsPoint,
     challenge: Scalar,
     response: Scalar,
@@ -212,7 +221,11 @@ impl VrfProof03 {
     /// - Compute `Gamma = secret_scalar *  H`
     /// - Generate a proof of discrete logarithm equality between `PK` and `Gamma` with
     ///   bases `generator` and `H` respectively.
-    pub fn generate(public_key: &PublicKey03, secret_key: &SecretKey03, alpha_string: &[u8]) -> Self {
+    pub fn generate(
+        public_key: &PublicKey03,
+        secret_key: &SecretKey03,
+        alpha_string: &[u8],
+    ) -> Self {
         let (secret_scalar, secret_extension) = secret_key.extend();
 
         let h = Self::hash_to_curve(public_key, alpha_string);
@@ -280,8 +293,6 @@ impl VrfProof03 {
 #[cfg(test)]
 mod test {
     use super::*;
-    use rand_core::SeedableRng;
-    use rand_chacha::ChaCha20Rng;
 
     //////////////////////////////////////////////////////////////////////////////////////////////////
     // VRF test vector from                                                                         //
@@ -515,7 +526,7 @@ mod test {
             let mut seed = [0u8; 32];
             seed.copy_from_slice(&hex::decode(vector[0]).unwrap());
             let sk = SecretKey03::from_bytes(&seed);
-            let pk = PublicKey::from(&sk);
+            let pk = PublicKey03::from(&sk);
             assert_eq!(pk.to_bytes()[..], hex::decode(vector[1]).unwrap());
 
             let alpha_string = hex::decode(vector[4]).unwrap();

@@ -12,5 +12,5 @@ pub enum VrfError {
     DecompressionFailed,
     /// This error occurs when a public key has small order
     #[error("PK has small order")]
-    PkSmallOrder
+    PkSmallOrder,
 }

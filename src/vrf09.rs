@@ -2,7 +2,7 @@ use curve25519_dalek::{
     constants::ED25519_BASEPOINT_POINT,
     edwards::{CompressedEdwardsY, EdwardsPoint},
     scalar::Scalar,
-    traits::VartimeMultiscalarMul
+    traits::VartimeMultiscalarMul,
 };
 
 use super::constants::*;
@@ -15,7 +15,9 @@ use std::iter;
 use std::ops::Neg;
 
 /// Byte size of the proof
-pub const PROOF_SIZE: usize = 128;
+pub const PROOF_SIZE: usize = 80;
+/// Temporary SUIT identifier, as TAI uses 0x03
+pub const SUITE_TEMP: &[u8] = &[0x03];
 
 /// Secret key, which is formed by `SEED_SIZE` bytes.
 pub struct SecretKey09([u8; SEED_SIZE]);
@@ -39,8 +41,8 @@ impl SecretKey09 {
     /// Given a cryptographically secure random number generator `csrng`, this function returns
     /// a random `SecretKey`
     pub fn generate<R>(csrng: &mut R) -> Self
-        where
-            R: CryptoRng + RngCore,
+    where
+        R: CryptoRng + RngCore,
     {
         let mut seed = [0u8; SEED_SIZE];
 
@@ -76,6 +78,11 @@ impl SecretKey09 {
 #[derive(Copy, Clone, Default, Eq, PartialEq)]
 pub struct PublicKey09(CompressedEdwardsY);
 
+impl Debug for PublicKey09 {
+    fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+        write!(f, "PublicKey({:?}))", self.0)
+    }
+}
 
 impl PublicKey09 {
     /// View the `PublicKey` as bytes
@@ -84,7 +91,7 @@ impl PublicKey09 {
     }
 
     /// Convert a `PublicKey` into its byte representation.
-    pub fn to_bytes(&self) -> [u8; PUBLIC_KEY_SIZE] {
+    pub fn to_bytes(self) -> [u8; PUBLIC_KEY_SIZE] {
         self.0.to_bytes()
     }
 
@@ -96,7 +103,7 @@ impl PublicKey09 {
 
 impl<'a> From<&'a SecretKey09> for PublicKey09 {
     /// Derive a public key from a `SecretKey`.
-    fn from(sk: &SecretKey) -> PublicKey09 {
+    fn from(sk: &SecretKey09) -> PublicKey09 {
         let (scalar, _) = sk.extend();
         let point = scalar * ED25519_BASEPOINT_POINT;
         PublicKey09(point.compress())
@@ -120,16 +127,18 @@ impl VrfProof09 {
     fn hash_to_curve(public_key: &PublicKey09, alpha_string: &[u8]) -> EdwardsPoint {
         let mut counter = 0u8;
         let mut hash_input = Vec::with_capacity(4 + PUBLIC_KEY_SIZE + alpha_string.len());
-        hash_input.extend_from_slice(SUITE);
+        hash_input.extend_from_slice(SUITE_TEMP);
         hash_input.extend_from_slice(ONE);
         hash_input.extend_from_slice(public_key.as_bytes());
         hash_input.extend_from_slice(alpha_string);
         hash_input.extend_from_slice(&counter.to_be_bytes());
         hash_input.extend_from_slice(ZERO);
 
-        for _ in 0..32 {
+        while  counter < 32 {
             hash_input[2 + PUBLIC_KEY_SIZE + alpha_string.len()] = counter.to_be_bytes()[0];
-            if let Some(result) = CompressedEdwardsY::from_slice(&Sha512::digest(&hash_input)[..32]).decompress() {
+            if let Some(result) =
+                CompressedEdwardsY::from_slice(&Sha512::digest(&hash_input)[..32]).decompress()
+            {
                 return result.mul_by_cofactor();
             };
 
@@ -161,7 +170,7 @@ impl VrfProof09 {
         // `Scalar::from_bits()` expects.
         let mut scalar_bytes = [0u8; 32];
         let mut challenge_hash = Sha512::new();
-        challenge_hash.update(SUITE);
+        challenge_hash.update(SUITE_TEMP);
         challenge_hash.update(TWO);
         challenge_hash.update(&compressed_h.to_bytes());
         challenge_hash.update(gamma.compress().as_bytes());
@@ -216,7 +225,7 @@ impl VrfProof09 {
         let mut output = [0u8; OUTPUT_SIZE];
         let gamma_cofac = self.gamma.mul_by_cofactor();
         let mut hash = Sha512::new();
-        hash.update(SUITE);
+        hash.update(SUITE_TEMP);
         hash.update(THREE);
         hash.update(gamma_cofac.compress().as_bytes());
         hash.update(ZERO);
@@ -231,7 +240,11 @@ impl VrfProof09 {
     /// - Compute `Gamma = secret_scalar *  H`
     /// - Generate a proof of discrete logarithm equality between `PK` and `Gamma` with
     ///   bases `generator` and `H` respectively.
-    pub fn generate(public_key: &PublicKey09, secret_key: &SecretKey09, alpha_string: &[u8]) -> Self {
+    pub fn generate(
+        public_key: &PublicKey09,
+        secret_key: &SecretKey09,
+        alpha_string: &[u8],
+    ) -> Self {
         let (secret_scalar, secret_extension) = secret_key.extend();
 
         let h = Self::hash_to_curve(public_key, alpha_string);
@@ -299,8 +312,6 @@ impl VrfProof09 {
 #[cfg(test)]
 mod test {
     use super::*;
-    use rand_core::SeedableRng;
-    use rand_chacha::ChaCha20Rng;
 
     //////////////////////////////////////////////////////////////////////////////////////////////////
     // VRF test vector from standard                                                                //
@@ -333,20 +344,20 @@ mod test {
 
     #[test]
     fn check_test_vectors() {
-        for vector in test_vectors().iter() {
+        for (index, vector) in test_vectors().iter().enumerate() {
             let mut seed = [0u8; 32];
             seed.copy_from_slice(&hex::decode(vector[0]).unwrap());
             let sk = SecretKey09::from_bytes(&seed);
             let pk = PublicKey09::from(&sk);
-            assert_eq!(pk.to_bytes()[..], hex::decode(vector[1]).unwrap());
+            assert_eq!(pk.to_bytes()[..], hex::decode(vector[1]).unwrap(), "PK comparison failed at iteration {}", index);
 
             let alpha_string = hex::decode(vector[4]).unwrap();
 
             let proof = VrfProof09::generate(&pk, &sk, &alpha_string);
-            assert_eq!(proof.to_bytes()[..], hex::decode(vector[2]).unwrap());
+            assert_eq!(proof.to_bytes()[..], hex::decode(vector[2]).unwrap(), "Proof comparison failed at iteration {}", index);
 
             let output = proof.verify(&pk, &alpha_string).unwrap();
-            assert_eq!(output[..], hex::decode(vector[3]).unwrap());
+            assert_eq!(output[..], hex::decode(vector[3]).unwrap(), "Output comparison failed at iteration {}", index);
         }
     }
 }
