@@ -5,7 +5,7 @@ Implementation of the verifiable random function presented in
 [draft-irtf-cfrg-vrf-03](https://datatracker.ietf.org/doc/html/draft-irtf-cfrg-vrf-03) using
 Edwards25519, SHA512, and Elligator2, and that presented in
 [draft-irtf-cfrg-vrf-09](https://datatracker.ietf.org/doc/html/draft-irtf-cfrg-vrf-09) using
-Edwards25519, SHA512, and try-and-increment.
+Edwards25519, SHA512, and Elligator2.
 
 The goal of this crate is to  a compatible implementation with 
 the VRF-03 [implemented over libsodium](https://github.com/input-output-hk/libsodium/tree/draft-irtf-cfrg-vrf-03/src/libsodium),

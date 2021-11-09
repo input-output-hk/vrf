@@ -11,8 +11,8 @@ edition = "2018"
 # the sign bit in the elligator function. However, the exposure that curve25519-dalek offers, does not allow us to
 # modify the elligator function. Therefore we rely on a fork that simply sets the bit. This fork should be only
 # one commit ahead over the tag of version 3.2.0.
-curve25519-dalek-fork = { package = "curve25519-dalek", git = "https://github.com/iquerejeta/curve25519-dalek", branch = "ietf03_vrf_compat_ell2", optional = true  }
-curve25519-dalek = { version = "3", optional = true}
+curve25519-dalek-fork = { package = "curve25519-dalek", git = "https://github.com/iquerejeta/curve25519-dalek", branch = "ietf03_vrf_compat_ell2" }
+curve25519-dalek = { version = "3" }
 rand_core = "0.6.3"
 sha2 = "0.9"
 thiserror = "1"
@@ -21,7 +21,3 @@ thiserror = "1"
 rand_chacha = "0.3.1"
 hex = "0.4.2"
 
-[features]
-default = ["version09"]
-version09 = ["curve25519-dalek"]
-version03 = ["curve25519-dalek-fork"]
