@@ -5,4 +5,5 @@ mod constants;
 pub mod errors;
 pub mod vrf;
 pub mod vrf03;
-mod vrf10; // not exposed, as it is the current version in `vrf`.
+pub mod vrf10;
+pub mod vrf10_batchcompat;

@@ -1,3 +1,4 @@
+//! Implementation of version 10 of the [standard draft](https://datatracker.ietf.org/doc/html/draft-irtf-cfrg-vrf-10).
 use curve25519_dalek::{
     constants::ED25519_BASEPOINT_POINT,
     edwards::{CompressedEdwardsY, EdwardsPoint},
@@ -16,7 +17,7 @@ use std::ops::Neg;
 
 /// Byte size of the proof
 pub const PROOF_SIZE: usize = 80;
-/// Temporary SUIT identifier, as TAI uses 0x03
+/// Temporary SUITE identifier, as TAI uses 0x03
 pub const SUITE_TEMP: &[u8] = &[0x03];
 
 /// Secret key, which is formed by `SEED_SIZE` bytes.
@@ -76,7 +77,7 @@ impl SecretKey10 {
 
 /// VRF Public key, which is formed by an Edwards point (in compressed form).
 #[derive(Copy, Clone, Default, Eq, PartialEq)]
-pub struct PublicKey10(CompressedEdwardsY);
+pub struct PublicKey10(pub(crate) CompressedEdwardsY);
 
 impl Debug for PublicKey10 {
     fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
@@ -129,7 +130,7 @@ impl VrfProof10 {
     /// [this pr](https://github.com/dalek-cryptography/curve25519-dalek/pull/377). The
     /// goal of providing this temporary function, is to ensure that the rest of the
     /// implementation is valid with respect to the standard, by using their test-vectors.
-    fn hash_to_curve(public_key: &PublicKey10, alpha_string: &[u8]) -> EdwardsPoint {
+    pub(crate) fn hash_to_curve(public_key: &PublicKey10, alpha_string: &[u8]) -> EdwardsPoint {
         let mut counter = 0u8;
         let mut hash_input = Vec::with_capacity(4 + PUBLIC_KEY_SIZE + alpha_string.len());
         hash_input.extend_from_slice(SUITE_TEMP);
@@ -139,7 +140,7 @@ impl VrfProof10 {
         hash_input.extend_from_slice(&counter.to_be_bytes());
         hash_input.extend_from_slice(ZERO);
 
-        while  counter < 64 {
+        while counter < 64 {
             hash_input[2 + PUBLIC_KEY_SIZE + alpha_string.len()] = counter.to_be_bytes()[0];
             if let Some(result) =
                 CompressedEdwardsY::from_slice(&Sha512::digest(&hash_input)[..32]).decompress()
@@ -153,8 +154,11 @@ impl VrfProof10 {
         EdwardsPoint::hash_from_bytes::<Sha512>(&hash_input)
     }
 
-    /// Nonce generation function, following the 03 specification.
-    fn nonce_generation10(secret_extension: [u8; 32], compressed_h: CompressedEdwardsY) -> Scalar {
+    /// Nonce generation function, following the 10 specification.
+    pub(crate) fn nonce_generation10(
+        secret_extension: [u8; 32],
+        compressed_h: CompressedEdwardsY,
+    ) -> Scalar {
         let mut nonce_gen_input = [0u8; 64];
         let h_bytes = compressed_h.to_bytes();
 
@@ -165,7 +169,7 @@ impl VrfProof10 {
     }
 
     /// Hash points function, following the 10 specification.
-    fn compute_challenge(
+    pub(crate) fn compute_challenge(
         compressed_h: &CompressedEdwardsY,
         gamma: &EdwardsPoint,
         announcement_1: &EdwardsPoint,
@@ -354,15 +358,30 @@ mod test {
             seed.copy_from_slice(&hex::decode(vector[0]).unwrap());
             let sk = SecretKey10::from_bytes(&seed);
             let pk = PublicKey10::from(&sk);
-            assert_eq!(pk.to_bytes()[..], hex::decode(vector[1]).unwrap(), "PK comparison failed at iteration {}", index);
+            assert_eq!(
+                pk.to_bytes()[..],
+                hex::decode(vector[1]).unwrap(),
+                "PK comparison failed at iteration {}",
+                index
+            );
 
             let alpha_string = hex::decode(vector[4]).unwrap();
 
             let proof = VrfProof10::generate(&pk, &sk, &alpha_string);
-            assert_eq!(proof.to_bytes()[..], hex::decode(vector[2]).unwrap(), "Proof comparison failed at iteration {}", index);
+            assert_eq!(
+                proof.to_bytes()[..],
+                hex::decode(vector[2]).unwrap(),
+                "Proof comparison failed at iteration {}",
+                index
+            );
 
             let output = proof.verify(&pk, &alpha_string).unwrap();
-            assert_eq!(output[..], hex::decode(vector[3]).unwrap(), "Output comparison failed at iteration {}", index);
+            assert_eq!(
+                output[..],
+                hex::decode(vector[3]).unwrap(),
+                "Output comparison failed at iteration {}",
+                index
+            );
         }
     }
 }
