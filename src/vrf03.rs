@@ -112,6 +112,7 @@ impl<'a> From<&'a SecretKey03> for PublicKey03 {
 }
 
 /// VRF proof, which is formed by an `EdwardsPoint`, and two `Scalar`s
+#[derive(Clone, Debug)]
 pub struct VrfProof03 {
     gamma: EdwardsPoint,
     challenge: Scalar,
