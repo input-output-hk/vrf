@@ -179,7 +179,7 @@ impl VrfProof03 {
         let mut response_bytes = [0u8; 32];
         response_bytes.copy_from_slice(&bytes[48..]);
         let response =
-            Scalar::from_canonical_bytes(response_bytes).ok_or(VrfError::DecompressionFailed)?;
+            Scalar::from_bytes_mod_order(response_bytes);
 
         Ok(Self {
             gamma,

@@ -5,4 +5,4 @@ mod constants;
 pub mod errors;
 pub mod vrf;
 pub mod vrf03;
-mod vrf09; // not exposed, as it is the current version in `vrf`.
+mod vrf10; // not exposed, as it is the current version in `vrf`.

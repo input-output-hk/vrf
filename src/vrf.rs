@@ -1,6 +1,6 @@
 //! This module implements `ECVRF-ED25519-SHA512-Elligator2`, as specified in IETF draft. The
 //! library provides both,
-//! [version 09](https://datatracker.ietf.org/doc/html/draft-irtf-cfrg-vrf-09),
+//! [version 10](https://datatracker.ietf.org/doc/html/draft-irtf-cfrg-vrf-10),
 //! and [version 03](https://datatracker.ietf.org/doc/html/draft-irtf-cfrg-vrf-03).
 //! However, the goal of this library is to be compatible with the VRF implementation over
 //! [libsodium](https://github.com/input-output-hk/libsodium). In particular, the differences
@@ -22,14 +22,14 @@
 //! By default, we always expose as the generic VRF, the latest version. However, all VRF functions
 //! are exposed in the API.
 #![allow(non_snake_case)]
-use crate::vrf09::{PublicKey09, SecretKey09, VrfProof09};
+use crate::vrf10::{PublicKey10, SecretKey10, VrfProof10};
 
 /// VRF secret key
-pub type SecretKey = SecretKey09;
+pub type SecretKey = SecretKey10;
 /// VRF public key
-pub type PublicKey = PublicKey09;
+pub type PublicKey = PublicKey10;
 /// VRF proof
-pub type VrfProof = VrfProof09;
+pub type VrfProof = VrfProof10;
 
 #[cfg(test)]
 mod test {
