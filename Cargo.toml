@@ -20,4 +20,8 @@ thiserror = "1"
 [dev-dependencies]
 rand_chacha = "0.3.1"
 hex = "0.4.2"
+criterion = "0.3.5"
 
+[[bench]]
+name = "vrf10"
+harness = false
