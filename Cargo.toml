@@ -15,6 +15,7 @@ curve25519-dalek-fork = { package = "curve25519-dalek", git = "https://github.co
 curve25519-dalek = { version = "3" }
 rand_core = "0.6.3"
 sha2 = "0.9"
+blake3 = "1.2.0"
 thiserror = "1"
 
 [dev-dependencies]
