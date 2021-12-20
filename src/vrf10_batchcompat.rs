@@ -22,10 +22,10 @@ use super::constants::*;
 use super::errors::VrfError;
 
 use crate::vrf10::{PublicKey10, SecretKey10, VrfProof10};
+use curve25519_dalek::traits::IsIdentity;
 use sha2::{Digest, Sha512};
 use std::iter;
 use std::ops::Neg;
-use curve25519_dalek::traits::IsIdentity;
 
 /// Byte size of the proof
 pub const PROOF_SIZE: usize = 128;
@@ -104,7 +104,7 @@ impl VrfProof10BatchCompat {
     }
 
     /// `proof_to_hash` function, equivalent to the 10 specification.
-    fn proof_to_hash(&self) -> [u8; OUTPUT_SIZE] {
+    pub fn proof_to_hash(&self) -> [u8; OUTPUT_SIZE] {
         let mut output = [0u8; OUTPUT_SIZE];
         let gamma_cofac = self.gamma.mul_by_cofactor();
         let mut hash = Sha512::new();
@@ -191,75 +191,113 @@ impl VrfProof10BatchCompat {
             Err(VrfError::VerificationFailed)
         }
     }
+}
 
+/// A structure that represents a batch verifier. It saves each proof and corresponding information
+/// independently.
+pub struct BatchVerifier {
+    proof_responses: Vec<Scalar>,
+    proof_challenges: Vec<Scalar>,
+    // We need to compute the h_point when introducing a new proof to the batch, so we store it
+    // to avoid double computation
+    points: Vec<EdwardsPoint>,
+    l_hasher: Sha512,
+    r_hasher: Sha512
+}
+
+impl BatchVerifier {
+    /// Initialise a BatchVerifier.
+    pub fn new() -> Self {
+        let l_hasher = Sha512::default()
+            .chain(b"suite_s")
+            .chain(&[0x4c]);
+        let r_hasher = Sha512::default()
+            .chain(b"suite_s")
+            .chain(&[0x52]);
+
+        Self { proof_responses: Vec::new(), proof_challenges: Vec::new(), points: Vec::new(), l_hasher, r_hasher }
+    }
+
+    /// Insert a new proof into the batch.
+    pub fn insert(&mut self, item: BatchItem) -> Result<(), VrfError> {
+        if item.output != item.proof.proof_to_hash() {
+            return Err(VrfError::VrfOutputInvalid);
+        }
+
+        let decompressed_pk = item.key
+            .0
+            .decompress()
+            .ok_or(VrfError::DecompressionFailed)?;
+
+        if decompressed_pk.is_small_order() {
+            return Err(VrfError::PkSmallOrder);
+        }
+
+        let h = VrfProof10BatchCompat::hash_to_curve(&item.key, &item.msg);
+
+        self.proof_challenges.push(VrfProof10BatchCompat::compute_challenge(
+            &h.compress(),
+            &item.proof.gamma,
+            &item.proof.u_point,
+            &item.proof.v_point,
+        ));
+
+        self.proof_responses.push(item.proof.response);
+
+        self.points.push(decompressed_pk);
+        self.points.push(item.proof.u_point);
+        self.points.push(h);
+        self.points.push(item.proof.gamma);
+        self.points.push(item.proof.v_point);
+
+        self.l_hasher = self.l_hasher
+            .clone()
+            .chain(&h.compress().to_bytes()[..])
+            .chain(&item.proof.to_bytes()[..]);
+        self.r_hasher = self.r_hasher
+            .clone()
+            .chain(&h.compress().to_bytes()[..])
+            .chain(&item.proof.to_bytes()[..]);
+
+        Ok(())
+    }
     /// Verify VRF function, following the spec.
-    pub fn batch_verify(
-        proofs: &[Self],
-        public_keys: &[PublicKey10],
-        alpha_strings: &Vec<Vec<u8>>,
-        proof_outputs: &[[u8; OUTPUT_SIZE]]
+    pub fn verify(
+        &self
     ) -> Result<(), VrfError> {
-        assert_eq!(proofs.len(), public_keys.len());
-        assert_eq!(proofs.len(), alpha_strings.len());
-        assert_eq!(proofs.len(), proof_outputs.len());
-        let size = proofs.len();
-        let mut scalars = Vec::with_capacity(size);
-        let mut points = Vec::with_capacity(size);
-        let mut h_points = Vec::with_capacity(size);
-        let mut s_t = Vec::with_capacity(size);
+        let mut B_coeff = Scalar::zero();
+        let mut scalars = Vec::with_capacity(self.proof_challenges.len());
+        let mut points = self.points.clone();
+        for (index, response) in self.proof_responses.iter().enumerate() {
+            let l_i_hash = &self.l_hasher
+                .clone()
+                .chain(&[0x00])
+                .chain(index.to_le_bytes())
+                .finalize()[..16];
+            let mut temp_slice = [0u8; 32];
+            temp_slice[..16].copy_from_slice(&l_i_hash);
+            let l_i = Scalar::from_bits(temp_slice);
 
-        // todo: check best way to zip several iters
-        for (proof, (pk, alpha_string)) in proofs.iter().zip(public_keys.iter().zip(alpha_strings.iter())) {
-            let h = Self::hash_to_curve(pk, alpha_string);
-            h_points.push(h);
-            s_t.extend_from_slice(&h.compress().to_bytes()[..]);
-            s_t.extend_from_slice(&proof.to_bytes()[..]);
+            let r_i_hash = &self.r_hasher
+                .clone()
+                .chain(index.to_le_bytes())
+                .chain(&[0x00])
+                .finalize()[..16];
+            temp_slice = [0u8; 32];
+            temp_slice[..16].copy_from_slice(&r_i_hash);
+            let r_i = Scalar::from_bits(temp_slice);
+
+            B_coeff += l_i * response;
+
+            scalars.push(l_i * self.proof_challenges[index]);
+            scalars.push(l_i);
+            scalars.push(r_i * response.neg());
+            scalars.push(r_i * self.proof_challenges[index]);
+            scalars.push(r_i * Scalar::one());
+
         }
-
-        for (((index, proof), (pk, &h)), &output) in proofs.iter().enumerate().zip(public_keys.iter().zip(h_points.iter())).zip(proof_outputs.iter()) {
-            let decompressed_pk = pk
-                .0
-                .decompress()
-                .ok_or(VrfError::DecompressionFailed)?;
-
-            if decompressed_pk.is_small_order() {
-                return Err(VrfError::PkSmallOrder);
-            }
-
-            if output != proof.proof_to_hash() {
-                return Err(VrfError::VrfOutputInvalid);
-            }
-
-            let l_i_hash = Sha512::default()
-                .chain(b"suite_s")
-                .chain(&[0x4c])
-                .chain(&index.to_le_bytes())
-                .chain(&s_t)
-                .chain(&[0x00]);
-            let l_i = Scalar::from_hash(l_i_hash);
-            let r_i_hash = Sha512::default()
-                .chain(b"suite_s")
-                .chain(&[0x52])
-                .chain(&index.to_le_bytes())
-                .chain(&s_t)
-                .chain(&[0x00]);
-            let r_i = Scalar::from_hash(r_i_hash);
-
-            let challenge_i = Self::compute_challenge(&h.compress(), &proof.gamma, &proof.u_point, &proof.v_point);
-            scalars.push(r_i * proof.response);
-            scalars.push(r_i * challenge_i.neg());
-            scalars.push(r_i.neg());
-            scalars.push(l_i * proof.response);
-            scalars.push(l_i * challenge_i.neg());
-            scalars.push(l_i.neg());
-
-            points.push(ED25519_BASEPOINT_POINT);
-            points.push(decompressed_pk);
-            points.push(proof.u_point);
-            points.push(h);
-            points.push(proof.gamma);
-            points.push(proof.v_point);
-        }
+        scalars.push(B_coeff.neg());
+        points.push(ED25519_BASEPOINT_POINT);
 
         if EdwardsPoint::vartime_multiscalar_mul(scalars, points).is_identity() {
             return Ok(());
@@ -269,11 +307,24 @@ impl VrfProof10BatchCompat {
     }
 }
 
+/// Structure representing a single batch element. Contains a proof, a public key, the message
+/// signed and the VRF output.
+pub struct BatchItem {
+    /// VRF proof of correct computation
+    pub proof: VrfProof10BatchCompat,
+    /// Key associated with the proof
+    pub key: PublicKey10,
+    /// Message (or sometimes referred to as `alpha`)
+    pub msg: Vec <u8>,
+    /// Pseudo-randomness generated by the VRF
+    pub output: [u8; OUTPUT_SIZE],
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
     use rand_chacha::ChaCha20Rng;
-    use rand_core::{SeedableRng, RngCore};
+    use rand_core::{RngCore, SeedableRng};
 
     //////////////////////////////////////////////////////////////////////////////////////////////////
     // VRF test vector from standard                                                                //
@@ -344,25 +395,61 @@ mod test {
         let mut alpha = vec![0u8; 32];
         let mut rng = ChaCha20Rng::from_seed([0u8; 32]);
 
-        let mut pks = Vec::with_capacity(nr_proofs);
-        let mut alphas = Vec::with_capacity(nr_proofs);
-        let mut proofs = Vec::with_capacity(nr_proofs);
-        let mut outputs = Vec::with_capacity(nr_proofs);
+        let mut batch_verifier = BatchVerifier::new();
 
         // We generate `nr_proofs` valid proofs.
         for _ in 0..nr_proofs {
             rng.fill_bytes(&mut alpha);
-            alphas.push(alpha.clone());
-            let secret_key = SecretKey10::generate(&mut ChaCha20Rng::from_seed([0u8; 32]));
+            let secret_key = SecretKey10::generate(&mut rng);
             let public_key = PublicKey10::from(&secret_key);
-            pks.push(public_key);
 
             let vrf_proof = VrfProof10BatchCompat::generate(&public_key, &secret_key, &alpha);
-            proofs.push(vrf_proof.clone());
-            outputs.push(vrf_proof.proof_to_hash());
+
+            batch_verifier.insert(BatchItem{
+                output: vrf_proof.proof_to_hash(),
+                proof: vrf_proof,
+                key: public_key,
+                msg: alpha.clone(),
+            }).expect("Should not fail");
         }
+        assert_eq!(batch_verifier.proof_challenges.len(), nr_proofs);
 
         // Now we perform batch_verification
-        assert!(VrfProof10BatchCompat::batch_verify(&proofs, &pks, &alphas, &outputs).is_ok());
+        assert!(batch_verifier.verify().is_ok());
+
+        // If we have a single invalid proof, the batch verification will fail.
+        let invalid_sk = SecretKey10::generate(&mut rng);
+        let invalid_pk = PublicKey10::from(&invalid_sk);
+
+        let secret_key = SecretKey10::generate(&mut rng);
+        let public_key = PublicKey10::from(&secret_key);
+        let vrf_proof = VrfProof10BatchCompat::generate(&public_key, &secret_key, &alpha);
+
+        let mut invalid_batch = BatchVerifier::new();
+
+        invalid_batch.insert(BatchItem{
+            output: vrf_proof.proof_to_hash(),
+            proof: vrf_proof,
+            key: invalid_pk,
+            msg: alpha.clone(),
+        }).expect("Should not fail");
+
+        for _ in 0..nr_proofs {
+            rng.fill_bytes(&mut alpha);
+            let secret_key = SecretKey10::generate(&mut rng);
+            let public_key = PublicKey10::from(&secret_key);
+
+            let vrf_proof = VrfProof10BatchCompat::generate(&public_key, &secret_key, &alpha);
+
+            invalid_batch.insert(BatchItem{
+                output: vrf_proof.proof_to_hash(),
+                proof: vrf_proof,
+                key: public_key,
+                msg: alpha.clone(),
+            }).expect("Should not fail");
+        }
+        assert_eq!(invalid_batch.proof_challenges.len(), nr_proofs + 1);
+        // Now we perform batch_verification
+        assert!(invalid_batch.verify().is_err());
     }
 }
