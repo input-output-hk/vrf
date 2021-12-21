@@ -13,15 +13,18 @@ edition = "2018"
 # one commit ahead over the tag of version 3.2.0. And the sole change is the sign flip.
 curve25519-dalek-fork = { package = "curve25519-dalek", git = "https://github.com/iquerejeta/curve25519-dalek", branch = "ietf03_vrf_compat_ell2" }
 curve25519-dalek = { version = "3" }
-rand_core = "0.6.3"
+rand_core = "0.5"
 sha2 = "0.9"
-blake3 = "1.2.0"
+blake3 = { version = "1.2.0", optional = true }
 thiserror = "1"
 
 [dev-dependencies]
-rand_chacha = "0.3.1"
+rand_chacha = "0.2"
 hex = "0.4.2"
 criterion = "0.3.5"
+
+[features]
+batch_deterministic = ["blake3"]
 
 [[bench]]
 name = "vrf10"

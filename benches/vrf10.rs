@@ -2,7 +2,7 @@
 use vrf_dalek::vrf10::{PublicKey10, SecretKey10, VrfProof10};
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use rand_chacha::ChaCha20Rng;
-use rand_core::{RngCore, SeedableRng};
+use rand_core::{SeedableRng};
 use std::time::Duration;
 use vrf_dalek::vrf10_batchcompat::{VrfProof10BatchCompat, BatchVerifier, BatchItem};
 
@@ -20,7 +20,7 @@ fn vrf10(c: &mut Criterion) {
     });
     group.bench_function("Verification", |b| {
         b.iter(|| {
-            vrf_proof.verify(&public_key, &alpha_string);
+            vrf_proof.verify(&public_key, &alpha_string).expect("Should pass.");
         })
     });
 }
@@ -43,7 +43,7 @@ fn vrf10_batchcompat(c: &mut Criterion) {
     });
     group.bench_function("Single Verification", |b| {
         b.iter(|| {
-            vrf_proof.verify(&public_key, &alpha);
+            vrf_proof.verify(&public_key, &alpha).expect("Should work");
         })
     });
 

@@ -23,9 +23,12 @@ use super::errors::VrfError;
 use crate::vrf10::{PublicKey10, SecretKey10, VrfProof10};
 use curve25519_dalek::traits::IsIdentity;
 use sha2::{Digest, Sha512};
+#[cfg(feature = "batch_deterministic")]
 use blake3;
 use std::iter;
 use std::ops::Neg;
+#[cfg(not(feature = "batch_deterministic"))]
+use rand_core::{RngCore, CryptoRng, OsRng};
 
 /// Byte size of the proof
 pub const PROOF_SIZE: usize = 128;
@@ -195,6 +198,7 @@ impl VrfProof10BatchCompat {
 
 /// A structure that represents a batch verifier. It saves each proof and corresponding information
 /// independently.
+#[cfg(feature = "batch_deterministic")]
 #[derive(Clone)]
 pub struct BatchVerifier {
     proof_scalars: Vec<(Scalar, Scalar)>,
@@ -207,6 +211,7 @@ pub struct BatchVerifier {
 
 }
 
+#[cfg(feature = "batch_deterministic")]
 impl BatchVerifier {
     /// Initialise a BatchVerifier.
     pub fn new(size_batch: usize) -> Self {
@@ -284,6 +289,120 @@ impl BatchVerifier {
             let mut temp_slice = [0u8; 32];
             temp_slice[..16].copy_from_slice(&r_hasher.finalize().as_bytes()[..16]);
             let r_i = Scalar::from_bits(temp_slice);
+
+            B_coeff += l_i * response;
+
+            lchalls.push(l_i * challenge);
+            ls.push(l_i);
+            rresponse.push(r_i * response.neg());
+            rchalls.push(r_i * challenge);
+            rs.push(r_i);
+
+        }
+        use iter::once;
+        let result = EdwardsPoint::vartime_multiscalar_mul(
+            once(&B_coeff.neg())
+                .chain(lchalls.iter())
+                .chain(ls.iter())
+                .chain(rresponse.iter())
+                .chain(rchalls.iter())
+                .chain(rs.iter()),
+            once(&ED25519_BASEPOINT_POINT)
+                .chain(self.pks.iter())
+                .chain(self.us.iter())
+                .chain(self.hs.iter())
+                .chain(self.gammas.iter())
+                .chain(self.vs.iter()));
+
+        if result.is_identity() {
+            return Ok(());
+        }
+
+        Err(VrfError::VerificationFailed)
+    }
+}
+
+#[cfg(not(feature = "batch_deterministic"))]
+fn gen_u128<R: RngCore + CryptoRng>(mut rng: R) -> u128 {
+    let mut bytes = [0u8; 16];
+    rng.fill_bytes(&mut bytes[..]);
+    u128::from_le_bytes(bytes)
+}
+
+/// A structure that represents a non-deterministic batch verifier. It saves each proof and
+/// corresponding information independently.
+#[cfg(not(feature = "batch_deterministic"))]
+#[derive(Clone)]
+pub struct BatchVerifier {
+    proof_scalars: Vec<(Scalar, Scalar)>,
+    pks: Vec<EdwardsPoint>,
+    us: Vec<EdwardsPoint>,
+    hs: Vec<EdwardsPoint>,
+    gammas: Vec<EdwardsPoint>,
+    vs: Vec<EdwardsPoint>,
+
+}
+
+#[cfg(not(feature = "batch_deterministic"))]
+impl BatchVerifier {
+    /// Initialise a BatchVerifier.
+    pub fn new(size_batch: usize) -> Self {
+        Self {
+            proof_scalars: Vec::with_capacity(size_batch),
+            pks: Vec::with_capacity(size_batch),
+            us: Vec::with_capacity(size_batch),
+            hs: Vec::with_capacity(size_batch),
+            gammas: Vec::with_capacity(size_batch),
+            vs: Vec::with_capacity(size_batch),
+            }
+    }
+
+    /// Insert a new proof into the batch.
+    pub fn insert(&mut self, item: BatchItem) -> Result<(), VrfError> {
+        if item.output != item.proof.proof_to_hash() {
+            return Err(VrfError::VrfOutputInvalid);
+        }
+        let decompressed_pk = item.key
+            .0
+            .decompress()
+            .ok_or(VrfError::DecompressionFailed)?;
+
+        if decompressed_pk.is_small_order() {
+            return Err(VrfError::PkSmallOrder);
+        }
+
+        let h = VrfProof10BatchCompat::hash_to_curve(&item.key, &item.msg);
+
+        self.proof_scalars.push((VrfProof10BatchCompat::compute_challenge(
+            &h.compress(),
+            &item.proof.gamma,
+            &item.proof.u_point,
+            &item.proof.v_point,
+        ), item.proof.response));
+
+        self.pks.push(decompressed_pk);
+        self.us.push(item.proof.u_point);
+        self.hs.push(h);
+        self.gammas.push(item.proof.gamma);
+        self.vs.push(item.proof.v_point);
+
+        Ok(())
+    }
+    /// Verify VRF function, following the spec.
+    pub fn verify(
+        self
+    ) -> Result<(), VrfError> {
+        let vec_size = self.proof_scalars.len();
+        let mut B_coeff = Scalar::zero();
+        let mut lchalls = Vec::with_capacity(vec_size);
+        let mut rchalls = Vec::with_capacity(vec_size);
+        let mut ls = Vec::with_capacity(vec_size);
+        let mut rs = Vec::with_capacity(vec_size);
+        let mut rresponse = Vec::with_capacity(vec_size);
+
+        for (challenge, response) in self.proof_scalars.iter() {
+            let l_i = Scalar::from(gen_u128(&mut OsRng));
+            let r_i = Scalar::from(gen_u128(&mut OsRng));
 
             B_coeff += l_i * response;
 
