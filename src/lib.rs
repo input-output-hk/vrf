@@ -1,6 +1,5 @@
 #![warn(missing_docs, rust_2018_idioms)]
 #![allow(non_snake_case)]
-#![feature(test)]
 //! VRF implementation
 mod constants;
 pub mod errors;
