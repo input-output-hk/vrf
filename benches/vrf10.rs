@@ -1,10 +1,9 @@
-#[allow(unused_must_use)]
-use vrf_dalek::vrf10::{PublicKey10, SecretKey10, VrfProof10};
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use rand_chacha::ChaCha20Rng;
-use rand_core::{SeedableRng};
-use std::time::Duration;
-use vrf_dalek::vrf10_batchcompat::{VrfProof10BatchCompat, BatchVerifier, BatchItem};
+use rand_core::SeedableRng;
+#[allow(unused_must_use)]
+use vrf_dalek::vrf10::{PublicKey10, SecretKey10, VrfProof10};
+use vrf_dalek::vrf10_batchcompat::{BatchItem, BatchVerifier, VrfProof10BatchCompat};
 
 fn vrf10(c: &mut Criterion) {
     let mut group = c.benchmark_group("VRF10");
@@ -20,7 +19,9 @@ fn vrf10(c: &mut Criterion) {
     });
     group.bench_function("Verification", |b| {
         b.iter(|| {
-            vrf_proof.verify(&public_key, &alpha_string).expect("Should pass.");
+            vrf_proof
+                .verify(&public_key, &alpha_string)
+                .expect("Should pass.");
         })
     });
 }
@@ -63,18 +64,22 @@ fn vrf10_batchcompat(c: &mut Criterion) {
         }
 
         group.bench_with_input(
-            BenchmarkId::new("Batch Verification (and insertion)", size), &size,
+            BenchmarkId::new("Batch Verification (and insertion)", size),
+            &size,
             |b, &size| {
                 b.iter(|| {
                     let mut batch_verifier = BatchVerifier::new(size);
 
-                    for (proof, (&pk, output)) in proofs.iter().zip(pks.iter().zip(outputs.iter())) {
-                        batch_verifier.insert(BatchItem{
-                            output: output.clone(),
-                            proof: proof.clone(),
-                            key: pk,
-                            msg: alpha.clone(),
-                        }).expect("Should not fail");
+                    for (proof, (&pk, output)) in proofs.iter().zip(pks.iter().zip(outputs.iter()))
+                    {
+                        batch_verifier
+                            .insert(BatchItem {
+                                output: output.clone(),
+                                proof: proof.clone(),
+                                key: pk,
+                                msg: alpha.clone(),
+                            })
+                            .expect("Should not fail");
                     }
                     batch_verifier.verify().expect("Should pass");
                 })
@@ -84,6 +89,6 @@ fn vrf10_batchcompat(c: &mut Criterion) {
 }
 
 criterion_group!(name = benches;
-                 config = Criterion::default().measurement_time(Duration::new(10, 0));
-                 targets = vrf10_batchcompat);
+                 config = Criterion::default();
+                 targets = vrf10, vrf10_batchcompat);
 criterion_main!(benches);

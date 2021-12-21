@@ -21,14 +21,14 @@ use super::constants::*;
 use super::errors::VrfError;
 
 use crate::vrf10::{PublicKey10, SecretKey10, VrfProof10};
-use curve25519_dalek::traits::IsIdentity;
-use sha2::{Digest, Sha512};
 #[cfg(feature = "batch_deterministic")]
 use blake3;
+use curve25519_dalek::traits::IsIdentity;
+#[cfg(not(feature = "batch_deterministic"))]
+use rand_core::{CryptoRng, OsRng, RngCore};
+use sha2::{Digest, Sha512};
 use std::iter;
 use std::ops::Neg;
-#[cfg(not(feature = "batch_deterministic"))]
-use rand_core::{RngCore, CryptoRng, OsRng};
 
 /// Byte size of the proof
 pub const PROOF_SIZE: usize = 128;
@@ -207,8 +207,7 @@ pub struct BatchVerifier {
     hs: Vec<EdwardsPoint>,
     gammas: Vec<EdwardsPoint>,
     vs: Vec<EdwardsPoint>,
-    hasher: blake3::Hasher
-
+    hasher: blake3::Hasher,
 }
 
 #[cfg(feature = "batch_deterministic")]
@@ -225,7 +224,8 @@ impl BatchVerifier {
             hs: Vec::with_capacity(size_batch),
             gammas: Vec::with_capacity(size_batch),
             vs: Vec::with_capacity(size_batch),
-            hasher }
+            hasher,
+        }
     }
 
     /// Insert a new proof into the batch.
@@ -233,7 +233,8 @@ impl BatchVerifier {
         if item.output != item.proof.proof_to_hash() {
             return Err(VrfError::VrfOutputInvalid);
         }
-        let decompressed_pk = item.key
+        let decompressed_pk = item
+            .key
             .0
             .decompress()
             .ok_or(VrfError::DecompressionFailed)?;
@@ -244,12 +245,15 @@ impl BatchVerifier {
 
         let h = VrfProof10BatchCompat::hash_to_curve(&item.key, &item.msg);
 
-        self.proof_scalars.push((VrfProof10BatchCompat::compute_challenge(
-            &h.compress(),
-            &item.proof.gamma,
-            &item.proof.u_point,
-            &item.proof.v_point,
-        ), item.proof.response));
+        self.proof_scalars.push((
+            VrfProof10BatchCompat::compute_challenge(
+                &h.compress(),
+                &item.proof.gamma,
+                &item.proof.u_point,
+                &item.proof.v_point,
+            ),
+            item.proof.response,
+        ));
 
         self.pks.push(decompressed_pk);
         self.us.push(item.proof.u_point);
@@ -263,9 +267,7 @@ impl BatchVerifier {
         Ok(())
     }
     /// Verify VRF function, following the spec.
-    pub fn verify(
-        mut self
-    ) -> Result<(), VrfError> {
+    pub fn verify(mut self) -> Result<(), VrfError> {
         let vec_size = self.proof_scalars.len();
         let mut B_coeff = Scalar::zero();
         let mut lchalls = Vec::with_capacity(vec_size);
@@ -297,7 +299,6 @@ impl BatchVerifier {
             rresponse.push(r_i * response.neg());
             rchalls.push(r_i * challenge);
             rs.push(r_i);
-
         }
         use iter::once;
         let result = EdwardsPoint::vartime_multiscalar_mul(
@@ -312,7 +313,8 @@ impl BatchVerifier {
                 .chain(self.us.iter())
                 .chain(self.hs.iter())
                 .chain(self.gammas.iter())
-                .chain(self.vs.iter()));
+                .chain(self.vs.iter()),
+        );
 
         if result.is_identity() {
             return Ok(());
@@ -340,7 +342,6 @@ pub struct BatchVerifier {
     hs: Vec<EdwardsPoint>,
     gammas: Vec<EdwardsPoint>,
     vs: Vec<EdwardsPoint>,
-
 }
 
 #[cfg(not(feature = "batch_deterministic"))]
@@ -354,7 +355,7 @@ impl BatchVerifier {
             hs: Vec::with_capacity(size_batch),
             gammas: Vec::with_capacity(size_batch),
             vs: Vec::with_capacity(size_batch),
-            }
+        }
     }
 
     /// Insert a new proof into the batch.
@@ -362,7 +363,8 @@ impl BatchVerifier {
         if item.output != item.proof.proof_to_hash() {
             return Err(VrfError::VrfOutputInvalid);
         }
-        let decompressed_pk = item.key
+        let decompressed_pk = item
+            .key
             .0
             .decompress()
             .ok_or(VrfError::DecompressionFailed)?;
@@ -373,12 +375,15 @@ impl BatchVerifier {
 
         let h = VrfProof10BatchCompat::hash_to_curve(&item.key, &item.msg);
 
-        self.proof_scalars.push((VrfProof10BatchCompat::compute_challenge(
-            &h.compress(),
-            &item.proof.gamma,
-            &item.proof.u_point,
-            &item.proof.v_point,
-        ), item.proof.response));
+        self.proof_scalars.push((
+            VrfProof10BatchCompat::compute_challenge(
+                &h.compress(),
+                &item.proof.gamma,
+                &item.proof.u_point,
+                &item.proof.v_point,
+            ),
+            item.proof.response,
+        ));
 
         self.pks.push(decompressed_pk);
         self.us.push(item.proof.u_point);
@@ -389,9 +394,7 @@ impl BatchVerifier {
         Ok(())
     }
     /// Verify VRF function, following the spec.
-    pub fn verify(
-        self
-    ) -> Result<(), VrfError> {
+    pub fn verify(self) -> Result<(), VrfError> {
         let vec_size = self.proof_scalars.len();
         let mut B_coeff = Scalar::zero();
         let mut lchalls = Vec::with_capacity(vec_size);
@@ -411,7 +414,6 @@ impl BatchVerifier {
             rresponse.push(r_i * response.neg());
             rchalls.push(r_i * challenge);
             rs.push(r_i);
-
         }
         use iter::once;
         let result = EdwardsPoint::vartime_multiscalar_mul(
@@ -426,7 +428,8 @@ impl BatchVerifier {
                 .chain(self.us.iter())
                 .chain(self.hs.iter())
                 .chain(self.gammas.iter())
-                .chain(self.vs.iter()));
+                .chain(self.vs.iter()),
+        );
 
         if result.is_identity() {
             return Ok(());
@@ -444,7 +447,7 @@ pub struct BatchItem {
     /// Key associated with the proof
     pub key: PublicKey10,
     /// Message (or sometimes referred to as `alpha`)
-    pub msg: Vec <u8>,
+    pub msg: Vec<u8>,
     /// Pseudo-randomness generated by the VRF
     pub output: [u8; OUTPUT_SIZE],
 }
@@ -534,12 +537,14 @@ mod test {
 
             let vrf_proof = VrfProof10BatchCompat::generate(&public_key, &secret_key, &alpha);
 
-            batch_verifier.insert(BatchItem{
-                output: vrf_proof.proof_to_hash(),
-                proof: vrf_proof,
-                key: public_key,
-                msg: alpha.clone(),
-            }).expect("Should not fail");
+            batch_verifier
+                .insert(BatchItem {
+                    output: vrf_proof.proof_to_hash(),
+                    proof: vrf_proof,
+                    key: public_key,
+                    msg: alpha.clone(),
+                })
+                .expect("Should not fail");
         }
         assert_eq!(batch_verifier.proof_scalars.len(), nr_proofs);
 
@@ -556,12 +561,14 @@ mod test {
 
         let mut invalid_batch = BatchVerifier::new(nr_proofs);
 
-        invalid_batch.insert(BatchItem{
-            output: vrf_proof.proof_to_hash(),
-            proof: vrf_proof,
-            key: invalid_pk,
-            msg: alpha.clone(),
-        }).expect("Should not fail");
+        invalid_batch
+            .insert(BatchItem {
+                output: vrf_proof.proof_to_hash(),
+                proof: vrf_proof,
+                key: invalid_pk,
+                msg: alpha.clone(),
+            })
+            .expect("Should not fail");
 
         for _ in 0..nr_proofs {
             rng.fill_bytes(&mut alpha);
@@ -570,12 +577,14 @@ mod test {
 
             let vrf_proof = VrfProof10BatchCompat::generate(&public_key, &secret_key, &alpha);
 
-            invalid_batch.insert(BatchItem{
-                output: vrf_proof.proof_to_hash(),
-                proof: vrf_proof,
-                key: public_key,
-                msg: alpha.clone(),
-            }).expect("Should not fail");
+            invalid_batch
+                .insert(BatchItem {
+                    output: vrf_proof.proof_to_hash(),
+                    proof: vrf_proof,
+                    key: public_key,
+                    msg: alpha.clone(),
+                })
+                .expect("Should not fail");
         }
         assert_eq!(invalid_batch.proof_scalars.len(), nr_proofs + 1);
         // Now we perform batch_verification
