@@ -25,11 +25,11 @@ use vrf_dalek::vrf10_batchcompat::{VrfProof10BatchCompat, BatchVerifier, BatchIt
 //     });
 // }
 
-static SIZE_BATCHES: [usize; 1] = [256]; //[2, 4, 8, 16, 32, 64]; //, 128, 256, 512, 1024];
+static SIZE_BATCHES: [usize; 1] = [256]; //[32, 64, 128, 256, 512, 1024];
 fn vrf10_batchcompat(c: &mut Criterion) {
     let mut group = c.benchmark_group("VRF10 Batch Compat");
     let nr_proofs = *SIZE_BATCHES.last().unwrap();
-    let mut alpha = vec![0u8; 32];
+    let alpha = vec![0u8; 32];
     let mut rng = ChaCha20Rng::from_seed([0u8; 32]);
 
     let secret_key = SecretKey10::generate(&mut rng);
@@ -61,7 +61,7 @@ fn vrf10_batchcompat(c: &mut Criterion) {
     }
 
     for size in SIZE_BATCHES {
-        group.bench_function("Insert first proof", |b| {
+        group.bench_function(BenchmarkId::new("Insert first proof", size), |b| {
             b.iter( || {
                 let mut batch_verifier = BatchVerifier::new(size);
                 batch_verifier.insert(BatchItem{
@@ -84,7 +84,7 @@ fn vrf10_batchcompat(c: &mut Criterion) {
             }).expect("Should not fail");
         }
 
-        group.bench_with_input("Insert last proof", &batch_verifier, |b, batch_verifier| {
+        group.bench_with_input(BenchmarkId::new("Insert last proof (with hasher)", size), &batch_verifier, |b, batch_verifier| {
             b.iter( || {
                 let mut verif = batch_verifier.clone();
                 verif.insert(BatchItem{

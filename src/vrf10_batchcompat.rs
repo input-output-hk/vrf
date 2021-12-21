@@ -197,33 +197,35 @@ impl VrfProof10BatchCompat {
 /// independently.
 #[derive(Clone)]
 pub struct BatchVerifier {
-    proof_responses: Vec<Scalar>,
-    proof_challenges: Vec<Scalar>,
-    points: Vec<EdwardsPoint>,
-    l_hasher: blake3::Hasher,
-    r_hasher: blake3::Hasher
+    proof_scalars: Vec<(Scalar, Scalar)>,
+    // points: Vec<EdwardsPoint>,
+    pks: Vec<EdwardsPoint>,
+    us: Vec<EdwardsPoint>,
+    hs: Vec<EdwardsPoint>,
+    gammas: Vec<EdwardsPoint>,
+    vs: Vec<EdwardsPoint>,
+    hasher: blake3::Hasher
+
 }
 
 impl BatchVerifier {
     /// Initialise a BatchVerifier.
     pub fn new(size_batch: usize) -> Self {
-        let mut l_hasher = blake3::Hasher::new();
-        l_hasher.update(b"suite_s");
-        l_hasher.update(&[0x4c]);
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(b"suite_s");
 
-        let mut r_hasher = blake3::Hasher::new();
-        r_hasher.update(b"suite_s");
-        r_hasher.update(&[0x52]);
-
-        Self { proof_responses: Vec::with_capacity(size_batch), proof_challenges: Vec::with_capacity(5 * size_batch + 1), points: Vec::with_capacity(size_batch), l_hasher, r_hasher }
+        Self {
+            proof_scalars: Vec::with_capacity(size_batch),
+            pks: Vec::with_capacity(size_batch),
+            us: Vec::with_capacity(size_batch),
+            hs: Vec::with_capacity(size_batch),
+            gammas: Vec::with_capacity(size_batch),
+            vs: Vec::with_capacity(size_batch),
+            hasher }
     }
 
     /// Insert a new proof into the batch.
     pub fn insert(&mut self, item: BatchItem) -> Result<(), VrfError> {
-        if item.output != item.proof.proof_to_hash() {
-            return Err(VrfError::VrfOutputInvalid);
-        }
-
         let decompressed_pk = item.key
             .0
             .decompress()
@@ -235,26 +237,21 @@ impl BatchVerifier {
 
         let h = VrfProof10BatchCompat::hash_to_curve(&item.key, &item.msg);
 
-        self.proof_challenges.push(VrfProof10BatchCompat::compute_challenge(
+        self.proof_scalars.push((VrfProof10BatchCompat::compute_challenge(
             &h.compress(),
             &item.proof.gamma,
             &item.proof.u_point,
             &item.proof.v_point,
-        ));
+        ), item.proof.response));
 
-        self.proof_responses.push(item.proof.response);
+        self.pks.push(decompressed_pk);
+        self.us.push(item.proof.u_point);
+        self.hs.push(h);
+        self.gammas.push(item.proof.gamma);
+        self.vs.push(item.proof.v_point);
 
-        self.points.push(decompressed_pk);
-        self.points.push(item.proof.u_point);
-        self.points.push(h);
-        self.points.push(item.proof.gamma);
-        self.points.push(item.proof.v_point);
-
-        self.l_hasher.update(&h.compress().to_bytes()[..]);
-        self.l_hasher.update(&item.proof.to_bytes()[..]);
-
-        self.r_hasher.update(&h.compress().to_bytes()[..]);
-        self.r_hasher.update(&item.proof.to_bytes()[..]);
+        self.hasher.update(h.compress().as_bytes());
+        self.hasher.update(&item.proof.to_bytes()[..]);
 
         Ok(())
     }
@@ -262,35 +259,55 @@ impl BatchVerifier {
     pub fn verify(
         mut self
     ) -> Result<(), VrfError> {
+        let vec_size = self.proof_scalars.len();
         let mut B_coeff = Scalar::zero();
-        let mut scalars = Vec::with_capacity(self.proof_challenges.len());
+        let mut lchalls = Vec::with_capacity(vec_size);
+        let mut rchalls = Vec::with_capacity(vec_size);
+        let mut ls = Vec::with_capacity(vec_size);
+        let mut rs = Vec::with_capacity(vec_size);
+        let mut rresponse = Vec::with_capacity(vec_size);
 
-        for (index, response) in self.proof_responses.iter().enumerate() {
-            self.l_hasher.update(&index.to_le_bytes());
-            self.l_hasher.update(&[0x00]);
+        for (index, (challenge, response)) in self.proof_scalars.iter().enumerate() {
+            self.hasher.update(&index.to_le_bytes());
+            self.hasher.update(&[0x00]);
+
+            let mut l_hasher = self.hasher.clone();
+            l_hasher.update(&[0x4c]);
             let mut temp_slice = [0u8; 32];
-            temp_slice[..16].copy_from_slice(&self.l_hasher.finalize().as_bytes()[..16]);
+            temp_slice[..16].copy_from_slice(&l_hasher.finalize().as_bytes()[..16]);
             let l_i = Scalar::from_bits(temp_slice);
 
-            self.r_hasher.update(&index.to_le_bytes());
-            self.r_hasher.update(&[0x00]);
+            let mut r_hasher = self.hasher.clone();
+            r_hasher.update(&[0x52]);
             let mut temp_slice = [0u8; 32];
-            temp_slice[..16].copy_from_slice(&self.r_hasher.finalize().as_bytes()[..16]);
+            temp_slice[..16].copy_from_slice(&r_hasher.finalize().as_bytes()[..16]);
             let r_i = Scalar::from_bits(temp_slice);
 
             B_coeff += l_i * response;
 
-            scalars.push(l_i * self.proof_challenges[index]);
-            scalars.push(l_i);
-            scalars.push(r_i * response.neg());
-            scalars.push(r_i * self.proof_challenges[index]);
-            scalars.push(r_i * Scalar::one());
+            lchalls.push(l_i * challenge);
+            ls.push(l_i);
+            rresponse.push(r_i * response.neg());
+            rchalls.push(r_i * challenge);
+            rs.push(r_i);
 
         }
-        scalars.push(B_coeff.neg());
-        self.points.push(ED25519_BASEPOINT_POINT);
+        use iter::once;
+        let result = EdwardsPoint::vartime_multiscalar_mul(
+            once(&B_coeff.neg())
+                .chain(lchalls.iter())
+                .chain(ls.iter())
+                .chain(rresponse.iter())
+                .chain(rchalls.iter())
+                .chain(rs.iter()),
+            once(&ED25519_BASEPOINT_POINT)
+                .chain(self.pks.iter())
+                .chain(self.us.iter())
+                .chain(self.hs.iter())
+                .chain(self.gammas.iter())
+                .chain(self.vs.iter()));
 
-        if EdwardsPoint::vartime_multiscalar_mul(scalars, self.points).is_identity() {
+        if result.is_identity() {
             return Ok(());
         }
 
@@ -405,7 +422,7 @@ mod test {
                 msg: alpha.clone(),
             }).expect("Should not fail");
         }
-        assert_eq!(batch_verifier.proof_challenges.len(), nr_proofs);
+        assert_eq!(batch_verifier.proof_scalars.len(), nr_proofs);
 
         // Now we perform batch_verification
         assert!(batch_verifier.verify().is_ok());
@@ -441,7 +458,7 @@ mod test {
                 msg: alpha.clone(),
             }).expect("Should not fail");
         }
-        assert_eq!(invalid_batch.proof_challenges.len(), nr_proofs + 1);
+        assert_eq!(invalid_batch.proof_scalars.len(), nr_proofs + 1);
         // Now we perform batch_verification
         assert!(invalid_batch.verify().is_err());
     }
