@@ -4,6 +4,7 @@ use rand_core::SeedableRng;
 #[allow(unused_must_use)]
 use vrf_dalek::vrf10::{PublicKey10, SecretKey10, VrfProof10};
 use vrf_dalek::vrf10_batchcompat::{BatchItem, BatchVerifier, VrfProof10BatchCompat};
+use std::time::Duration;
 
 fn vrf10(c: &mut Criterion) {
     let mut group = c.benchmark_group("VRF10");
@@ -89,6 +90,6 @@ fn vrf10_batchcompat(c: &mut Criterion) {
 }
 
 criterion_group!(name = benches;
-                 config = Criterion::default();
+                 config = Criterion::default().measurement_time(Duration::new(30, 0));
                  targets = vrf10, vrf10_batchcompat);
 criterion_main!(benches);

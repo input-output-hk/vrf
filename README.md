@@ -28,3 +28,66 @@ stick to the `try-and-increment` version of the H2C function. While it provides 
 same security guarantees and efficiency, it does not provide compatibility with 
 implementations that use the elligator function. We hope to the PR linked above, 
 merged soon. 
+
+## Benchmarks
+We ran our benchmarks using `RUSTFLAGS='-C target-cpu=native' cargo bench` with 
+an `Intel Core i7 @ 2,7 GHz`. We run the benchmarks with and without the feature
+`batch_deterministic`.
+
+Using deterministic batching
+```
+VRF10/Generation        time:   [151.86 us 154.50 us 157.65 us]
+VRF10/Verification      time:   [112.43 us 114.26 us 116.30 us]
+
+VRF10 Batch Compat/Generation
+                        time:   [149.78 us 153.94 us 158.98 us]
+VRF10 Batch Compat/Single Verification
+                        time:   [115.58 us 118.88 us 122.64 us]               
+VRF10 Batch Compat/Batch Verification/32
+                        time:   [2.8448 ms 2.8590 ms 3.0307 ms]
+VRF10 Batch Compat/Batch Verification/64
+                        time:   [5.2697 ms 5.3886 ms 5.5184 ms]
+VRF10 Batch Compat/Batch Verification/128
+                        time:   [9.7886 ms 9.4337 ms 10.226 ms]
+VRF10 Batch Compat/Batch Verification/256
+                        time:   [19.332 ms 17.856 ms 20.228 ms]
+VRF10 Batch Compat/Batch Verification/512
+                        time:   [37.447 ms 35.341 ms 39.251 ms]
+VRF10 Batch Compat/Batch Verification/1024
+                        time:   [72.113 ms 69.364 ms 75.462 ms]
+```
+
+Using random batching
+```
+VRF10 Batch Compat/Batch Verification/32
+                        time:   [2.3848 ms 2.3904 ms 2.3964 ms]
+VRF10 Batch Compat/Batch Verification/64
+                        time:   [4.3754 ms 4.4000 ms 4.4309 ms]
+VRF10 Batch Compat/Batch Verification/128
+                        time:   [8.5777 ms 8.7975 ms 9.0524 ms]
+VRF10 Batch Compat/Batch Verification/256
+                        time:   [15.807 ms 15.878 ms 15.955 ms]
+VRF10 Batch Compat/Batch Verification/512
+                        time:   [29.507 ms 29.605 ms 29.712 ms]
+VRF10 Batch Compat/Batch Verification/1024
+                        time:   [57.788 ms 58.080 ms 58.412 ms]
+```
+
+
+Translated into cost of a single verification (time in us)
+
+|Size| Deterministic | Non-deterministic | 
+|:----: | :----: | :----: |
+|1 | 118.88 | 118.88 |
+|32 | 89 |75 |
+| 64 | 84 | 69 |
+|128 | 74 | 69| 
+| 256 | 70 | 62 |
+| 512 | 69 | 58|
+| 1024 | 67 | 56 |
+
+Using non-deterministic batching we can reduce to 0.6 the time per verification
+with batches of 64, and 0.47 with batches of 1024. Using deterministic batching
+the times are slightly worse, as we need to compute two additional hashes for each 
+proof verified. We reduce the time per verification to 0.71 with batches of 64 
+and up to 0.56 with batches of 1024. 
