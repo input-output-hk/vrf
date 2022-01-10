@@ -39,38 +39,56 @@ Using deterministic batching
 VRF10/Generation        time:   [151.86 us 154.50 us 157.65 us]
 VRF10/Verification      time:   [112.43 us 114.26 us 116.30 us]
 
-VRF10 Batch Compat/Generation
-                        time:   [149.78 us 153.94 us 158.98 us]
-VRF10 Batch Compat/Single Verification
-                        time:   [115.58 us 118.88 us 122.64 us]               
-VRF10 Batch Compat/Batch Verification/32
-                        time:   [2.8448 ms 2.8590 ms 3.0307 ms]
-VRF10 Batch Compat/Batch Verification/64
-                        time:   [5.2697 ms 5.3886 ms 5.5184 ms]
-VRF10 Batch Compat/Batch Verification/128
-                        time:   [9.7886 ms 9.4337 ms 10.226 ms]
-VRF10 Batch Compat/Batch Verification/256
-                        time:   [19.332 ms 17.856 ms 20.228 ms]
-VRF10 Batch Compat/Batch Verification/512
-                        time:   [37.447 ms 35.341 ms 39.251 ms]
-VRF10 Batch Compat/Batch Verification/1024
-                        time:   [72.113 ms 69.364 ms 75.462 ms]
+VRF10 Batch Compat/Generation                                                                             
+                        time:   [167.07 us 167.78 us 168.65 us]
+VRF10 Batch Compat/Single Verification                                                                             
+                        time:   [117.46 us 117.90 us 118.57 us]
+VRF10 Batch Compat/Batch Verification/2                                                                             
+                        time:   [209.31 us 209.65 us 210.11 us]
+VRF10 Batch Compat/Batch Verification/4                                                                            
+                        time:   [371.98 us 372.49 us 373.16 us]
+VRF10 Batch Compat/Batch Verification/8                                                                            
+                        time:   [691.76 us 693.18 us 694.88 us]
+VRF10 Batch Compat/Batch Verification/16                                                                            
+                        time:   [1.3509 ms 1.3532 ms 1.3562 ms]
+VRF10 Batch Compat/Batch Verification/32                                                                            
+                        time:   [2.6405 ms 2.6447 ms 2.6503 ms]
+VRF10 Batch Compat/Batch Verification/64                                                                            
+                        time:   [4.9783 ms 4.9845 ms 4.9920 ms]
+VRF10 Batch Compat/Batch Verification/128                                                                             
+                        time:   [9.3936 ms 9.4085 ms 9.4276 ms]
+VRF10 Batch Compat/Batch Verification/256                                                                             
+                        time:   [17.669 ms 17.712 ms 17.764 ms]
+VRF10 Batch Compat/Batch Verification/512                                                                            
+                        time:   [34.347 ms 34.552 ms 34.772 ms]
+VRF10 Batch Compat/Batch Verification/1024                                                                            
+                        time:   [66.427 ms 66.553 ms 66.700 ms]
 ```
 
 Using random batching
 ```
-VRF10 Batch Compat/Batch Verification/32
-                        time:   [2.3848 ms 2.3904 ms 2.3964 ms]
-VRF10 Batch Compat/Batch Verification/64
-                        time:   [4.3754 ms 4.4000 ms 4.4309 ms]
-VRF10 Batch Compat/Batch Verification/128
-                        time:   [8.5777 ms 8.7975 ms 9.0524 ms]
-VRF10 Batch Compat/Batch Verification/256
-                        time:   [15.807 ms 15.878 ms 15.955 ms]
-VRF10 Batch Compat/Batch Verification/512
-                        time:   [29.507 ms 29.605 ms 29.712 ms]
-VRF10 Batch Compat/Batch Verification/1024
-                        time:   [57.788 ms 58.080 ms 58.412 ms]
+VRF10 Batch Compat/Single Verification                                                                             
+                        time:   [117.02 us 117.19 us 117.40 us]
+VRF10 Batch Compat/Batch Verification/2                                                                             
+                        time:   [189.38 us 189.77 us 190.28 us]
+VRF10 Batch Compat/Batch Verification/4                                                                            
+                        time:   [331.81 us 335.83 us 343.93 us]
+VRF10 Batch Compat/Batch Verification/8                                                                            
+                        time:   [623.53 us 624.47 us 625.58 us]
+VRF10 Batch Compat/Batch Verification/16                                                                            
+                        time:   [1.2093 ms 1.2146 ms 1.2219 ms]
+VRF10 Batch Compat/Batch Verification/32                                                                            
+                        time:   [2.2665 ms 2.2708 ms 2.2759 ms]
+VRF10 Batch Compat/Batch Verification/64                                                                            
+                        time:   [4.2367 ms 4.2446 ms 4.2542 ms]
+VRF10 Batch Compat/Batch Verification/128                                                                             
+                        time:   [7.9080 ms 7.9315 ms 7.9585 ms]
+VRF10 Batch Compat/Batch Verification/256                                                                             
+                        time:   [14.653 ms 14.676 ms 14.702 ms]
+VRF10 Batch Compat/Batch Verification/512                                                                             
+                        time:   [28.060 ms 28.108 ms 28.165 ms]
+VRF10 Batch Compat/Batch Verification/1024                                                                            
+                        time:   [54.467 ms 54.584 ms 54.711 ms]
 ```
 
 
@@ -91,3 +109,31 @@ with batches of 64, and 0.47 with batches of 1024. Using deterministic batching
 the times are slightly worse, as we need to compute two additional hashes for each 
 proof verified. We reduce the time per verification to 0.71 with batches of 64 
 and up to 0.56 with batches of 1024. 
+
+Now we print the time it takes to compute exclusively the multi-scalar operation.
+
+Deterministic 
+```
+
+VRF10 Batch Compat/Multiscalar multiplication (no insertion)/2                                                                             
+                        time:   [119.49 us 119.74 us 120.01 us]
+VRF10 Batch Compat/Multiscalar multiplication (no insertion)/4                                                                             
+                        time:   [195.84 us 197.03 us 198.70 us]
+VRF10 Batch Compat/Multiscalar multiplication (no insertion)/8                                                                            
+                        time:   [378.70 us 379.48 us 380.38 us]
+VRF10 Batch Compat/Multiscalar multiplication (no insertion)/16                                                                            
+                        time:   [721.83 us 722.97 us 724.23 us]
+VRF10 Batch Compat/Multiscalar multiplication (no insertion)/32                                                                            
+                        time:   [1.4040 ms 1.4063 ms 1.4092 ms]
+VRF10 Batch Compat/Multiscalar multiplication (no insertion)/64                                                                            
+                        time:   [2.3390 ms 2.3431 ms 2.3476 ms]
+VRF10 Batch Compat/Multiscalar multiplication (no insertion)/128                                                                            
+                        time:   [4.0649 ms 4.0912 ms 4.1274 ms]
+VRF10 Batch Compat/Multiscalar multiplication (no insertion)/256                                                                             
+                        time:   [7.1750 ms 7.1892 ms 7.2051 ms]
+VRF10 Batch Compat/Multiscalar multiplication (no insertion)/512                                                                             
+                        time:   [12.885 ms 12.922 ms 12.965 ms]
+VRF10 Batch Compat/Multiscalar multiplication (no insertion)/1024                                                                             
+                        time:   [24.290 ms 24.333 ms 24.383 ms]
+```
+
