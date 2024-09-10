@@ -203,7 +203,7 @@ impl VrfProof03 {
     /// `proof_to_hash` function, following the 03 specification. This computes the output of the VRF
     /// function. In particular, this function computes
     /// SHA512(SUITE || THREE || Gamma)
-    fn proof_to_hash(&self) -> [u8; OUTPUT_SIZE] {
+    pub fn proof_to_hash(&self) -> [u8; OUTPUT_SIZE] {
         let mut output = [0u8; OUTPUT_SIZE];
         let gamma_cofac = self.gamma.mul_by_cofactor();
         let mut hash = Sha512::new();
