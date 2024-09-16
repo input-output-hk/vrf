@@ -12,8 +12,8 @@ use super::errors::VrfError;
 use rand_core::{CryptoRng, RngCore};
 use sha2::{Digest, Sha512};
 use std::fmt::Debug;
-use std::iter;
 use std::ops::Neg;
+use std::{iter, ptr};
 
 /// Byte size of the proof
 pub const PROOF_SIZE: usize = 80;
@@ -72,6 +72,18 @@ impl SecretKey10 {
         secret_key_bytes[31] |= 64;
 
         (Scalar::from_bits(secret_key_bytes), extension)
+    }
+}
+
+impl Drop for SecretKey10 {
+    #[inline(never)]
+    fn drop(&mut self) {
+        unsafe {
+            let ptr = self.0.as_mut_ptr();
+            for i in 0..SEED_SIZE {
+                ptr::write_volatile(ptr.add(i), 0u8);
+            }
+        }
     }
 }
 
@@ -182,7 +194,7 @@ impl VrfProof10 {
         let mut challenge_hash = Sha512::new();
         challenge_hash.update(SUITE_TEMP);
         challenge_hash.update(TWO);
-        challenge_hash.update(&compressed_h.to_bytes());
+        challenge_hash.update(compressed_h.to_bytes());
         challenge_hash.update(gamma.compress().as_bytes());
         challenge_hash.update(announcement_1.compress().as_bytes());
         challenge_hash.update(announcement_2.compress().as_bytes());
