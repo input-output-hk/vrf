@@ -404,8 +404,8 @@ impl BatchVerifier {
         let mut rresponse = Vec::with_capacity(vec_size);
 
         for (challenge, response) in self.proof_scalars.iter() {
-            let l_i = Scalar::from(gen_u128(&mut OsRng));
-            let r_i = Scalar::from(gen_u128(&mut OsRng));
+            let l_i = Scalar::from(gen_u128(OsRng));
+            let r_i = Scalar::from(gen_u128(OsRng));
 
             B_coeff += l_i * response;
 
